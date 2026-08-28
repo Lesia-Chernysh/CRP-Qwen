@@ -351,7 +351,7 @@ class CondAttribution:
             additional_forward_kwargs = {
                 key: value
                 for key, value in batch.items()
-                if key != "pixel_values"
+                if key != "pixel_values" and key != "input_ids"
             }
 
             # IMPORTANT: tuple of Tensor, not tuple of BatchFeature
