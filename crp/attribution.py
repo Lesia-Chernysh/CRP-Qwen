@@ -323,6 +323,50 @@ class CondAttribution:
 
         print(f"inputs type: {type(inputs)}")
 
+        from transformers.feature_extraction_utils import BatchFeature
+
+        # Handle either:
+        #   BatchFeature(...)
+        # or:
+        #   (BatchFeature(...),)
+        if isinstance(inputs, BatchFeature):
+            batch = inputs
+
+        elif (
+                isinstance(inputs, tuple)
+                and len(inputs) == 1
+                and isinstance(inputs[0], BatchFeature)
+        ):
+            batch = inputs[0]
+
+        else:
+            batch = None
+
+        if batch is not None:
+            pixel_values = batch["pixel_values"]
+
+            # We attribute with respect to the image
+            pixel_values.requires_grad_(True)
+
+            additional_forward_kwargs = {
+                key: value
+                for key, value in batch.items()
+                if key != "pixel_values"
+            }
+
+            # IMPORTANT: tuple of Tensor, not tuple of BatchFeature
+            inputs = (pixel_values,)
+
+
+        # Normal CRP case
+        elif not isinstance(inputs, tuple):
+            inputs = (inputs,)
+
+        print("BEFORE BROADCAST")
+        print("inputs type:", type(inputs))
+        print("inputs[0] type:", type(inputs[0]))
+        print("inputs[0] shape:", inputs[0].shape)
+
         if not isinstance(inputs, tuple):
             inputs = (inputs,)
         inputs, conditions, additional_forward_kwargs = self.broadcast(inputs, conditions, additional_forward_kwargs)
