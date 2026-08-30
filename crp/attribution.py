@@ -1,3 +1,4 @@
+
 from zennit.composites import NameMapComposite
 from zennit.core import Composite
 from crp.hooks import MaskHook
@@ -367,6 +368,8 @@ class CondAttribution:
         print("inputs[0] type:", type(inputs[0]))
         print("inputs[0] shape:", inputs[0].shape)
 
+        print(additional_forward_kwargs)
+
         if not isinstance(inputs, tuple):
             inputs = (inputs,)
         inputs, conditions, additional_forward_kwargs = self.broadcast(inputs, conditions, additional_forward_kwargs)
@@ -399,7 +402,7 @@ class CondAttribution:
             
             if start_layer:
                 # TODO: different
-                _ = modified(*inputs, **additional_forward_kwargs)
+                _ = modified(*inputs, **additional_forward_kwargs).logits
                 pred = layer_out[start_layer]
                 grad_mask = self.relevance_init(pred.detach().clone(), None, init_rel)
                 if start_layer in cond_l_names:
@@ -407,7 +410,7 @@ class CondAttribution:
                 self.backward(pred, grad_mask, exclude_parallel, cond_l_names, layer_out)
 
             else:
-                pred = modified(*inputs, **additional_forward_kwargs)
+                pred = modified(*inputs, **additional_forward_kwargs).logits
                 grad_mask = self.relevance_init(pred.detach().clone(), y_targets, init_rel)
                 self.backward(pred, grad_mask, exclude_parallel, cond_l_names, layer_out)
 
