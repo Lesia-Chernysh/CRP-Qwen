@@ -20,7 +20,7 @@ from crp.image import vis_img_heatmap, vis_opaque_img
 from crp.cache import Cache
 
 
-class ViLTFeatureVisualization:
+class QwenTFeatureVisualization:
 
     def __init__(
             self, attribution: CondAttribution, dataset, layer_map: Dict[str, Concept], processor=None,
@@ -96,7 +96,11 @@ class ViLTFeatureVisualization:
             target_counts = list(map(len, multi_targets))
             targets = np.array(list(itertools.chain(*multi_targets))) # flatten 2d list
             # copy data for every target in target list 
+            print(inputs["image_grid_thw"])
             for key, input_batch in inputs.items():
+                print(key)
+                print(input_batch.shape)
+
                 inputs[key] = input_batch.repeat_interleave(torch.tensor(target_counts).cuda(), dim=0)
             sample_indices = np.array(sample_indices).repeat(target_counts, axis=0)
             
@@ -165,10 +169,10 @@ class ViLTFeatureVisualization:
             return_tensors="pt",
         ).to(self.device)
 
-        targets = [[self.attribution.model.hf_model.config.label2id[label] for label in labels if label in self.attribution.model.hf_model.config.label2id] for labels in answers]
+        targets = [[self.attribution.model.config.label2id[label] for label in labels if label in self.attribution.model.hf_model.config.label2id] for labels in answers]
     
-        inputs.to(self.attribution.model.hf_model.device)
-        inputs["input_embeds"] = self.attribution.model.hf_model.get_input_embeddings()(inputs.input_ids).detach().requires_grad_(True)
+        inputs.to(self.attribution.model.device)
+        inputs["input_embeds"] = self.attribution.model.get_input_embeddings()(inputs.input_ids).detach().requires_grad_(True)
         inputs.pixel_values.requires_grad_(True)
 
         return inputs, targets
