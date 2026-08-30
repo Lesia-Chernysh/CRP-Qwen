@@ -128,27 +128,109 @@ class CondAttribution:
     def broadcast(self, inputs, conditions, additional_forward_kwargs) -> Tuple[torch.Tensor, Dict]:
         print("broadcast")
 
-        len_inputs, len_cond = len(inputs[0]), len(conditions)
-        assert all(len(i) == len_inputs for i in inputs)
+        if not isinstance(inputs, tuple):
+            inputs = (inputs,)
+
+        len_inputs = inputs[0].shape[0]
+        len_cond = len(conditions)
+
+        kwargs = additional_forward_kwargs or {}
+
+        if len_cond > 1:
+            # Standard positional CRP inputs
+            inputs = tuple(
+                torch.repeat_interleave(
+                    x,
+                    len_cond,
+                    dim=0,
+                )
+                for x in inputs
+            )
+
+            new_kwargs = {}
+
+            # Keep originals before modifying anything
+            pixel_values = kwargs.get("pixel_values")
+            image_grid_thw = kwargs.get("image_grid_thw")
+
+            # ----------------------------
+            # Normal batch-first kwargs
+            # ----------------------------
+            for key, val in kwargs.items():
+
+                if key in {
+                    "pixel_values",
+                    "image_grid_thw",
+                }:
+                    continue
+
+                if torch.is_tensor(val):
+                    new_kwargs[key] = torch.repeat_interleave(
+                        val,
+                        len_cond,
+                        dim=0,
+                    )
+                else:
+                    new_kwargs[key] = val
+
+
+            # ----------------------------
+            # Qwen packed visual input
+            # ----------------------------
+            if (
+                pixel_values is not None
+                and image_grid_thw is not None
+            ):
+                patch_counts = (
+                    image_grid_thw
+                    .prod(dim=1)
+                    .tolist()
+                )
+
+                chunks = torch.split(
+                    pixel_values,
+                    patch_counts,
+                    dim=0,
+                )
+
+                repeated_chunks = []
+
+                for chunk in chunks:
+                    repeated_chunks.extend(
+                        [chunk] * len_cond
+                    )
+
+
+                new_kwargs["pixel_values"] = torch.cat(
+                    repeated_chunks,
+                    dim=0,
+                )
+
+                new_kwargs["image_grid_thw"] = (
+                    image_grid_thw.repeat_interleave(
+                        len_cond,
+                        dim=0,
+                    )
+                )
+
+            kwargs = new_kwargs
+
 
         print(f"len inputs, len conditions: {len_inputs}, {len_cond}")
 
         if len_inputs == len_cond:
             for i in inputs:
                 i.retain_grad()
-            return inputs, conditions, additional_forward_kwargs
+            return inputs, conditions, kwargs
         
-        if len_cond > 1:
-            inputs = tuple(torch.repeat_interleave(i, len_cond, dim=0) for i in inputs)
-            additional_forward_kwargs = {key:torch.repeat_interleave(val, len_cond, dim=0) for key, val in additional_forward_kwargs}
         if len_inputs > 1:
             conditions = conditions * len_inputs
-            
+
         for i in inputs:
             i.retain_grad()
 
-        print(f"addit. forward kwargs: {additional_forward_kwargs}")
-        return inputs, conditions, additional_forward_kwargs
+        print(f"addit. forward kwargs: {kwargs}")
+        return inputs, conditions, kwargs
 
     def _check_arguments(self, inputs, conditions, start_layer, exclude_parallel, init_rel):
 
