@@ -506,7 +506,7 @@ class CondAttribution:
             else:
                 pred = modified(
                   input_embeds=additional_forward_kwargs["input_embeds"],
-                  pixel_values=additional_forward_kwargs["pixel_values"],
+                  pixel_values=inputs[0], # TODO: does it have to be a tuple at all?
                   image_grid_thw=additional_forward_kwargs["image_grid_thw"],
                   attention_mask=torch.ones_like(additional_forward_kwargs["input_ids"]),
                 ).logits
