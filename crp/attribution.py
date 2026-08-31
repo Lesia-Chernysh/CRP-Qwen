@@ -131,7 +131,12 @@ class CondAttribution:
         if not isinstance(inputs, tuple):
             inputs = (inputs,)
 
-        len_inputs = inputs[0].shape[0]
+        image_grid_thw = kwargs.get("image_grid_thw")
+        if image_grid_thw is not None:
+            len_inputs = image_grid_thw.shape[0]
+        else:
+            len_inputs = inputs[0].shape[0]
+            
         len_cond = len(conditions)
 
         kwargs = additional_forward_kwargs or {}
@@ -405,6 +410,8 @@ class CondAttribution:
         print(f"record layer: {record_layer}")
 
         print(f"inputs type: {type(inputs)}")
+
+        print(f"inputs keys: {inputs.keys()}")
 
         from transformers.feature_extraction_utils import BatchFeature
 
