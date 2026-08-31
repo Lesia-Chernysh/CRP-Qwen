@@ -131,7 +131,7 @@ class CondAttribution:
         if not isinstance(inputs, tuple):
             inputs = (inputs,)
 
-        image_grid_thw = kwargs.get("image_grid_thw")
+        image_grid_thw = additional_forward_kwargs.get("image_grid_thw")
         if image_grid_thw is not None:
             len_inputs = image_grid_thw.shape[0]
         else:
@@ -441,7 +441,7 @@ class CondAttribution:
             additional_forward_kwargs = {
                 key: value
                 for key, value in batch.items()
-                if key != "pixel_values" and key != "input_ids"
+                if key != "pixel_values"
             }
 
             # IMPORTANT: tuple of Tensor, not tuple of BatchFeature
@@ -491,7 +491,12 @@ class CondAttribution:
             
             if start_layer:
                 # TODO: different
-                _ = modified(*inputs, **additional_forward_kwargs).logits
+                _ = modified(
+                  input_embeds=additional_forward_kwargs["input_embeds"],
+                  pixel_values=inputs[0], # TODO: does it have to be a tuple at all?
+                  image_grid_thw=additional_forward_kwargs["image_grid_thw"],
+                  attention_mask=torch.ones_like(additional_forward_kwargs["input_ids"]),
+                ).logits
                 pred = layer_out[start_layer]
                 grad_mask = self.relevance_init(pred.detach().clone(), None, init_rel)
                 if start_layer in cond_l_names:
@@ -499,7 +504,12 @@ class CondAttribution:
                 self.backward(pred, grad_mask, exclude_parallel, cond_l_names, layer_out)
 
             else:
-                pred = modified(*inputs, **additional_forward_kwargs).logits
+                pred = modified(
+                  input_embeds=additional_forward_kwargs["input_embeds"],
+                  pixel_values=additional_forward_kwargs["pixel_values"],
+                  image_grid_thw=additional_forward_kwargs["image_grid_thw"],
+                  attention_mask=torch.ones_like(additional_forward_kwargs["input_ids"]),
+                ).logits
                 grad_mask = self.relevance_init(pred.detach().clone(), y_targets, init_rel)
                 self.backward(pred, grad_mask, exclude_parallel, cond_l_names, layer_out)
 
