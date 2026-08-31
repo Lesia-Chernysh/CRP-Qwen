@@ -334,7 +334,7 @@ class CondAttribution:
 
         print(f"inputs type: {type(inputs)}")
 
-        print(f"inputs keys: {inputs.keys()}")
+        #print(f"inputs keys: {inputs.keys()}")
 
         from transformers.feature_extraction_utils import BatchFeature
 
@@ -416,10 +416,10 @@ class CondAttribution:
             if start_layer:
                 # TODO: different
                 _ = modified(
-                  input_embeds=additional_forward_kwargs["input_embeds"],
+                  inputs_embeds=additional_forward_kwargs["input_embeds"],
                   pixel_values=inputs[0], # TODO: does it have to be a tuple at all?
                   image_grid_thw=additional_forward_kwargs["image_grid_thw"],
-                  attention_mask=torch.ones_like(additional_forward_kwargs["input_ids"]),
+                  attention_mask=additional_forward_kwargs["attention_mask"],
                 ).logits
                 pred = layer_out[start_layer]
                 grad_mask = self.relevance_init(pred.detach().clone(), None, init_rel)
@@ -429,10 +429,10 @@ class CondAttribution:
 
             else:
                 pred = modified(
-                  input_embeds=additional_forward_kwargs["input_embeds"],
+                  inputs_embeds=additional_forward_kwargs["input_embeds"],
                   pixel_values=inputs[0], # TODO: does it have to be a tuple at all?
                   image_grid_thw=additional_forward_kwargs["image_grid_thw"],
-                  attention_mask=torch.ones_like(additional_forward_kwargs["input_ids"]),
+                  attention_mask=additional_forward_kwargs["attention_mask"],
                 ).logits
                 grad_mask = self.relevance_init(pred.detach().clone(), y_targets, init_rel)
                 self.backward(pred, grad_mask, exclude_parallel, cond_l_names, layer_out)
