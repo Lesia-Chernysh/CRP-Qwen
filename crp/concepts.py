@@ -261,42 +261,76 @@ class TransformerChannelConcept(Concept):
 
         return rel_l
 
-    def reference_sampling(self, relevance_or_activation, layer_name: str = None, max_target: str = "sum", abs_norm=True, additional_forward_kwargs=None):
-        """
-        Samples the most relevant/activated concepts for each sample in the batch. 
-        Total channel relevance/activation can be defined as the sum or the maximum of the relevances/activations of all neurons in the channel.
+    def reference_sampling(
+        self,
+        relevance_or_activation,
+        layer_name,
+        max_target,
+        abs_norm,
+        additional_forward_kwargs,
+    ):
+        x = relevance_or_activation
 
-        Parameters:
-            relevance_or_activation: tensor [batch, tokens, embed_dim/channels]
-            max_target: str. Either 'sum' or 'max'.
-            abs_norm: bool. Whether the relevance/activations are normalized
-        """
-        print("rel/ act shape", relevance_or_activation.shape)
-        
-        # position of receptive field neuron
-        rf_neuron = torch.argmax(relevance_or_activation, dim=-2)
-        
-        # channel maximization target --> sum neurons in channel across tokens
-        if max_target == "sum":
-            rel_l = torch.sum(relevance_or_activation, dim=-2)
+        if x.ndim == 3:
+            # Standard CRP case:
+            # [batch, neurons/tokens, channels]
 
-        # if choosing only max target pick max neuron in channel across tokens
-        elif max_target == "max":
-            rel_l = torch.amax(relevance_or_activation, dim=-2)
+            rf_neuron = torch.argmax(x, dim=-2)
+
+            if max_target == "sum":
+                rel_l = torch.sum(x, dim=-2)
+
+            elif max_target == "max":
+                rel_l = torch.amax(x, dim=-2)
+
+            else:
+                raise ValueError(
+                    "'max_target' supports only 'max' or 'sum'."
+                )
+
+        elif x.ndim == 2:
+            # VLMLP:
+            # [batch, channels]
+
+            rel_l = x
+
+            # No spatial / receptive-field neuron axis exists here.
+            rf_neuron = torch.zeros_like(
+                rel_l,
+                dtype=torch.long,
+            )
 
         else:
-            raise ValueError("'max_target' supports only 'max' or 'sum'.")
-        
+            raise ValueError(
+                f"Unsupported activation shape {x.shape} "
+                f"for layer {layer_name}"
+            )
+
         if abs_norm:
-            rel_l = rel_l / (torch.abs(rel_l).sum(-1, keepdim=True) + 1e-10)
+            rel_l = rel_l / (
+                torch.abs(rel_l).sum(dim=-1, keepdim=True)
+                + 1e-10
+            )
 
-        # sort in dataset index order
-        d_ch_sorted = torch.argsort(rel_l, dim=0, descending=True)
-        rel_ch_sorted = torch.gather(rel_l, dim=0, index=d_ch_sorted)
-        rf_ch_sorted = torch.gather(rf_neuron, dim=0, index=d_ch_sorted)
+        # Sort samples independently for every channel.
+        rel_c_sorted, b_c_sorted = torch.sort(
+            rel_l,
+            dim=0,
+            descending=True,
+        )
 
-        return d_ch_sorted, rel_ch_sorted, rf_ch_sorted
+        # rf_neuron must follow the same sample ordering.
+        rf_c_sorted = torch.gather(
+            rf_neuron,
+            dim=0,
+            index=b_c_sorted,
+        )
 
+        return (
+            b_c_sorted,
+            rel_c_sorted,
+            rf_c_sorted,
+        )
 
 class ICAConcept(Concept):
     """
