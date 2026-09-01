@@ -99,6 +99,18 @@ class CondAttribution:
                 used to initialize relevance instead of prediction. If None, target_list is used.
                 Please make sure to choose the right shape.
         """
+        print("prediction shape:", prediction.shape)
+        print("target_list:", target_list)
+
+        output_selection = self._select_output(prediction)  # or whatever code currently creates it
+        print("output_selection shape:", output_selection.shape)
+
+        for i, targets in enumerate(target_list):
+            print(
+                "i:", i,
+                "targets:", targets,
+                "output_selection[i] shape:", output_selection[i].shape,
+            )
 
         if callable(init_rel):
             output_selection = init_rel(prediction)
