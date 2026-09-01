@@ -78,6 +78,7 @@ class FeatVisHook:
           output = output[0]
 
         activation = output.detach().to(self.on_device) if self.on_device else output.detach()
+        print(f"post forward, activations: {activation.shape}")
         self.FV.analyze_activation(activation, self.layer_name, self.concept, s_indices, targets, additional_forward_kwargs)
 
         print("hooks, post forward")
