@@ -434,6 +434,24 @@ class CondAttribution:
                   image_grid_thw=additional_forward_kwargs["image_grid_thw"],
                   attention_mask=additional_forward_kwargs["attention_mask"],
                 ).logits
+
+                # for test, print outputs
+                # Remove the original prompt tokens
+                output_ids = self.model.generate(**inputs, max_new_tokens=20)
+
+                generated_ids_trimmed = [
+                    output_ids[len(input_ids):]
+                    for input_ids, output_ids in zip(inputs.input_ids, output_ids)
+                ]
+
+                answer = self.processor.batch_decode(
+                    generated_ids_trimmed,
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=False,
+                )
+                print(f"Predicted answer: {answer}")
+
+
                 grad_mask = self.relevance_init(pred.detach().clone(), y_targets, init_rel)
                 self.backward(pred, grad_mask, exclude_parallel, cond_l_names, layer_out)
 
