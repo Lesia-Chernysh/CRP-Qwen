@@ -437,11 +437,16 @@ class CondAttribution:
 
                 # for test, print outputs
                 # Remove the original prompt tokens
-                output_ids = self.model.generate(**inputs, max_new_tokens=20)
+                inputs_generate = additional_forward_kwargs
+                inputs_generate["pixel_values"] = inputs[0]
+                inputs_generate = inputs_generate.pop("input_embeds")
+                print(f"inputs_generate: {inputs_generate.keys()}")
+
+                output_ids = self.model.generate(**inputs_generate, max_new_tokens=20)
 
                 generated_ids_trimmed = [
                     output_ids[len(input_ids):]
-                    for input_ids, output_ids in zip(inputs.input_ids, output_ids)
+                    for input_ids, output_ids in zip(inputs_generate["input_ids"], output_ids)
                 ]
 
                 answer = self.processor.batch_decode(
