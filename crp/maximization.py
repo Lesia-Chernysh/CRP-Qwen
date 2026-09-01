@@ -60,8 +60,9 @@ class Maximization:
 
         d_c_sorted = torch.take(data_indices, b_c_sorted)
         # sort targets
-        targets = torch.Tensor(targets).to(b_c_sorted)
-        t_c_sorted = torch.take(targets, b_c_sorted)
+        # TODO: uncomment
+        #targets = torch.Tensor(targets).to(b_c_sorted)
+        #t_c_sorted = torch.take(targets, b_c_sorted)
 
         SZ = self.SAMPLE_SIZE
         self.concatenate_with_results(layer_name, d_c_sorted[:SZ], rel_c_sorted[:SZ], rf_c_sorted[:SZ])
