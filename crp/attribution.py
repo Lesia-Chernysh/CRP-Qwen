@@ -435,11 +435,11 @@ class CondAttribution:
                   attention_mask=additional_forward_kwargs["attention_mask"],
                 ).logits
 
-                # for test, print outputs
+                '''# for test, print outputs
                 # Remove the original prompt tokens
                 inputs_generate = additional_forward_kwargs
                 inputs_generate["pixel_values"] = inputs[0]
-                inputs_generate = inputs_generate.pop("input_embeds")
+                inputs_generate.pop("input_embeds")
                 print(f"inputs_generate: {inputs_generate.keys()}")
 
                 output_ids = self.model.generate(**inputs_generate, max_new_tokens=20)
@@ -454,7 +454,7 @@ class CondAttribution:
                     skip_special_tokens=True,
                     clean_up_tokenization_spaces=False,
                 )
-                print(f"Predicted answer: {answer}")
+                print(f"Predicted answer: {answer}")'''
 
 
                 grad_mask = self.relevance_init(pred.detach().clone(), y_targets, init_rel)
