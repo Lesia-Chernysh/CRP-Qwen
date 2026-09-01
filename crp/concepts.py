@@ -271,6 +271,7 @@ class TransformerChannelConcept(Concept):
             max_target: str. Either 'sum' or 'max'.
             abs_norm: bool. Whether the relevance/activations are normalized
         """
+        print("rel/ act shape", relevance_or_activation.shape)
         
         # position of receptive field neuron
         rf_neuron = torch.argmax(relevance_or_activation, dim=-2)
