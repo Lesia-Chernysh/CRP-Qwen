@@ -197,7 +197,7 @@ class TransformerChannelConcept(Concept):
             return start, end
 
         def mask_fct(grad):
-            print("grad shape:", grad.shape)
+            #print("grad shape:", grad.shape)
 
             start, end = get_image_slice(grad)
 
@@ -212,7 +212,7 @@ class TransformerChannelConcept(Concept):
             return grad
 
         def mask_fct_rf(grad):
-            print("grad shape:", grad.shape)
+            #print("grad shape:", grad.shape)
 
             start, end = get_image_slice(grad)
 
@@ -248,7 +248,7 @@ class TransformerChannelConcept(Concept):
     ):
 
         def mask_fct(grad):
-            print("grad shape:", grad.shape)
+            #print("grad shape:", grad.shape)
 
             grid = additional_forward_kwargs["image_grid_thw"]
 
@@ -286,7 +286,7 @@ class TransformerChannelConcept(Concept):
         if isinstance(mask, torch.Tensor):
             relevance = relevance * mask
 
-        print("raw relevance shape:", relevance.shape)
+        #print("raw relevance shape:", relevance.shape)
 
         grid = additional_forward_kwargs["image_grid_thw"]
         token_counts = grid.prod(dim=1).tolist()
@@ -306,7 +306,7 @@ class TransformerChannelConcept(Concept):
         )
 
         # [batch, channels]
-        print("aggregated relevance shape:", rel_l.shape)
+        #print("aggregated relevance shape:", rel_l.shape)
 
         if abs_norm:
             rel_l = rel_l / (
