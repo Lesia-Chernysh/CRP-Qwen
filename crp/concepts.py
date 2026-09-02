@@ -174,92 +174,151 @@ class TransformerChannelConcept(Concept):
     """
 
     @staticmethod
-    def mask(batch_id: int, concept_ids: List, layer_name=None, additional_forward_kwargs=None, rf=False):
-        """
-        Wrapper that generates a function that modifies the gradient (replaced by zennit by attributions).
+    def mask(
+        batch_id: int,
+        concept_ids: List,
+        layer_name=None,
+        additional_forward_kwargs=None,
+        rf=False,
+    ):
 
-        Parameters:
-        ----------
-        batch_id: int
-            Specifies the batch dimension in the torch.Tensor.
-        concept_ids: list of integer values
-            integer lists corresponding to neuron indices.
+        def get_image_slice(grad):
+            grid = additional_forward_kwargs["image_grid_thw"]
 
-        Returns:
-        --------
-        callable function that modifies the gradient
-        """
+            token_counts = grid.prod(dim=1).long()
+            starts = torch.cat([
+                torch.zeros(1, device=token_counts.device, dtype=torch.long),
+                token_counts.cumsum(0)[:-1],
+            ])
+
+            start = int(starts[batch_id].item())
+            end = start + int(token_counts[batch_id].item())
+
+            return start, end
 
         def mask_fct(grad):
-            # grad in transformer is [batch, tokens, embedding/channel], a channel is across tokens
-            print(f"grad shape: {grad.shape}")
+            print("grad shape:", grad.shape)
 
-            mask = torch.zeros_like(grad[batch_id])
-            mask[..., concept_ids] = 1
-            grad[batch_id] = grad[batch_id] * mask
+            start, end = get_image_slice(grad)
+
+            # grad[start:end] = [tokens_for_this_image, channels]
+            mask = torch.zeros_like(grad[start:end])
+
+            # Keep selected concepts across every visual token
+            mask[:, concept_ids] = 1
+
+            grad[start:end] = grad[start:end] * mask
 
             return grad
 
         def mask_fct_rf(grad):
+            print("grad shape:", grad.shape)
 
-            mask = torch.zeros_like(grad[batch_id])
+            start, end = get_image_slice(grad)
+
+            image_grad = grad[start:end]
+            # [tokens_for_image, channels]
+
+            mask = torch.zeros_like(image_grad)
 
             for concept_id in concept_ids:
-                mask[..., torch.argmax(torch.abs(grad[batch_id, ..., concept_id])), concept_id] = 1
+                # Find strongest visual token for this channel
+                neuron = torch.argmax(
+                    torch.abs(image_grad[:, concept_id])
+                )
 
-            grad[batch_id] = grad[batch_id] * mask
-            
+                mask[neuron, concept_id] = 1
+
+            grad[start:end] = image_grad * mask
+
             return grad
 
         if rf:
             return mask_fct_rf
+
         return mask_fct
-
+        
     @staticmethod
-    def mask_rf(batch_id: int, c_n_map: Dict[int, List], layer_name=None, additional_forward_kwargs=None, rf=False):
-        """
-        Wrapper that generates a function that modifies the gradient (replaced by zennit by attributions) for a single neuron.
-
-        Parameters:
-        ----------
-        batch_id: int
-            Specifies the batch dimension in the torch.Tensor.
-        c_n_map: dist with int keys and list values
-            Keys correspond to channel indices and values correspond to neuron indices.
-            Neuron Indices are counted as if the 2D Channel has 1D dimension i.e. channel dimension [3, 20, 20] -> [3, 400],
-            so that neuron indices range between 0 and 399.
-
-        Returns:
-        --------
-        callable function that modifies the gradient
-        """
+    def mask_rf(
+        batch_id: int,
+        c_n_map: Dict[int, List],
+        layer_name=None,
+        additional_forward_kwargs=None,
+        rf=False,
+    ):
 
         def mask_fct(grad):
-            print(f"grad shape: {grad.shape}")
+            print("grad shape:", grad.shape)
 
-            mask = torch.zeros_like(grad[batch_id])
-            
+            grid = additional_forward_kwargs["image_grid_thw"]
+
+            token_counts = grid.prod(dim=1).long()
+
+            start = int(
+                token_counts[:batch_id].sum().item()
+            )
+            end = start + int(token_counts[batch_id].item())
+
+            image_grad = grad[start:end]
+            # [tokens_for_image, channels]
+
+            mask = torch.zeros_like(image_grad)
+
             for concept, neuron in c_n_map.items():
-                mask[..., neuron, concept] = 1
-                
-            grad[batch_id] = grad[batch_id] * mask
-            
+                # neuron is local to this image's token sequence
+                mask[neuron, concept] = 1
+
+            grad[start:end] = image_grad * mask
+
             return grad
 
         return mask_fct
-            
-    def attribute(self, relevance, mask=None, layer_name: str = None, abs_norm=True):
+
+    def attribute(
+        self,
+        relevance,
+        mask=None,
+        layer_name=None,
+        abs_norm=True,
+        additional_forward_kwargs=None,
+    ):
 
         if isinstance(mask, torch.Tensor):
             relevance = relevance * mask
 
-        print(f"relevance shape: {relevance.shape}")
-        rel_l = relevance.sum(dim=-2)
+        print("raw relevance shape:", relevance.shape)
+
+        grid = additional_forward_kwargs["image_grid_thw"]
+        token_counts = grid.prod(dim=1).tolist()
+
+        assert sum(token_counts) == relevance.shape[0]
+
+        chunks = torch.split(
+            relevance,
+            token_counts,
+            dim=0,
+        )
+
+        # Sum relevance over visual tokens belonging to each image
+        rel_l = torch.stack(
+            [chunk.sum(dim=0) for chunk in chunks],
+            dim=0,
+        )
+
+        # [batch, channels]
+        print("aggregated relevance shape:", rel_l.shape)
 
         if abs_norm:
-            rel_l = rel_l / (torch.abs(rel_l).sum(-1).view(-1, 1) + 1e-10)
+            rel_l = rel_l / (
+                torch.abs(rel_l).sum(
+                    dim=-1,
+                    keepdim=True,
+                )
+                + 1e-10
+            )
 
         return rel_l
+
 
     def reference_sampling(
         self,
