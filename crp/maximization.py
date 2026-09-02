@@ -107,9 +107,9 @@ class Maximization:
             else:
                 filename = f"{layer_name}_"
 
-            np.save(self.PATH / Path(filename + "data.npy"), self.d_c_sorted[layer_name].cpu().numpy())
-            np.save(self.PATH / Path(filename + "rf.npy"), self.rf_c_sorted[layer_name].cpu().numpy())
-            np.save(self.PATH / Path(filename + "rel.npy"), self.rel_c_sorted[layer_name].cpu().numpy())
+            np.save(self.PATH / Path(filename + "data.npy"), self.d_c_sorted[layer_name].float().cpu().numpy())
+            np.save(self.PATH / Path(filename + "rf.npy"), self.rf_c_sorted[layer_name].float().cpu().numpy())
+            np.save(self.PATH / Path(filename + "rel.npy"), self.rel_c_sorted[layer_name].float().cpu().numpy())
 
             saved_files.append(str(self.PATH / Path(filename)))
 
