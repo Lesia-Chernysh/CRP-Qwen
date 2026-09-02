@@ -45,17 +45,17 @@ class CondAttribution:
 
 
     def backward(self, pred, grad_mask, partial_backward, layer_names, layer_out, generate=False):
-        print("backward")
+        #print("backward")
 
         if partial_backward and len(layer_names) > 0:
 
             wrt_tensor, grad_tensors = pred, grad_mask.to(pred)
 
             for l_name in layer_names:
-                print(f"layer {l_name}")
+                #print(f"layer {l_name}")
                 
                 inputs = layer_out[l_name]
-                print(f"layer inputs shape: {inputs.shape}")
+                #print(f"layer inputs shape: {inputs.shape}")
 
                 try:
                     grad = torch.autograd.grad(wrt_tensor, inputs=inputs, grad_outputs=grad_tensors, retain_graph=True)
@@ -123,10 +123,10 @@ class CondAttribution:
 
         n_conditions = len(conditions)
 
-        print(
-            f"CRP batch={batch_size}, "
-            f"conditions={n_conditions}"
-        )
+        #print(
+        #    f"CRP batch={batch_size}, "
+        #    f"conditions={n_conditions}"
+        #)
 
         if batch_size != n_conditions:
             raise RuntimeError(
@@ -309,10 +309,10 @@ class CondAttribution:
         exclude_parallel: boolean
             If set, all layer names in 'conditions' must be identical. This limitation does not apply to the __call__ method.
         """
-        print("_attribute")
-        print(f"record layer: {record_layer}")
+        #print("_attribute")
+        #print(f"record layer: {record_layer}")
 
-        print(f"inputs type: {type(inputs)}")
+        #print(f"inputs type: {type(inputs)}")
 
         #print(f"inputs keys: {inputs.keys()}")
 
@@ -355,17 +355,17 @@ class CondAttribution:
         elif not isinstance(inputs, tuple):
             inputs = (inputs,)
 
-        print("BEFORE BROADCAST")
-        print("inputs type:", type(inputs))
-        print("inputs[0] type:", type(inputs[0]))
-        print("inputs[0] shape:", inputs[0].shape)
+        #print("BEFORE BROADCAST")
+        #print("inputs type:", type(inputs))
+        #print("inputs[0] type:", type(inputs[0]))
+        #print("inputs[0] shape:", inputs[0].shape)
 
 
         if not isinstance(inputs, tuple):
             inputs = (inputs,)
         inputs, conditions, additional_forward_kwargs = self.broadcast(inputs, conditions, additional_forward_kwargs)
 
-        print(additional_forward_kwargs)
+        #print(additional_forward_kwargs)
 
         self._check_arguments(inputs, conditions, start_layer, exclude_parallel, init_rel)
 
@@ -444,12 +444,12 @@ class CondAttribution:
             attribution = self.heatmap_modifier(inputs, on_device)
             activations, relevances = {}, {}
             
-            print("len out", len(layer_out))
+            #print("len out", len(layer_out))
             if len(layer_out) > 0:
                 activations, relevances = self._collect_hook_activation_relevance(layer_out, on_device)
             [h.remove() for h in handles]
 
-        print(f"act: {activations}\nrel: {relevances}\npred: {pred}\n")
+        #print(f"act: {activations}\nrel: {relevances}\npred: {pred}\n")
         return attrResult(attribution, activations, relevances, pred)
 
     def generate(
