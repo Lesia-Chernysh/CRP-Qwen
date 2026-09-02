@@ -93,7 +93,7 @@ class QwenFeatureVisualization:
 
             # handle multiple targets (vqa has multiple answers per question)
             target_counts = list(map(len, multi_targets))
-            print(f"target_counts: {target_counts}")
+            #print(f"target_counts: {target_counts}")
 
             targets = np.array(list(itertools.chain(*multi_targets)))  # flatten 2d list
             # copy data for every target in target list
@@ -107,7 +107,7 @@ class QwenFeatureVisualization:
             original_grid = inputs["image_grid_thw"]  # 224 / patch_kernel = 224/14 = 16
             original_pixels = inputs["pixel_values"]  # shape: (2560, 1176), 1176 = 14*14*2(temporal)*3(channels)
 
-            print("original pixels", original_pixels.shape)
+            #print("original pixels", original_pixels.shape)
             # Number of packed visual rows belonging to each image
             '''
             Instead of shape (batch, hidden, n_neurons), Qwen packs inputs into
@@ -128,7 +128,7 @@ class QwenFeatureVisualization:
                #      ...
                #   ), len(tuple)=2560/256=10
 
-            print(f"patch_counts: {patch_counts}")
+            #print(f"patch_counts: {patch_counts}")
 
             # Duplicate each complete image's patches according to CRP target count
             new_pixel_chunks = []
@@ -156,11 +156,9 @@ class QwenFeatureVisualization:
                         dim=0,
                     )  # --> (batch, text/multimodal sequence length)
 
-                    print(f"repeat {key}. {inputs[key].shape}")
+                    #print(f"repeat {key}. {inputs[key].shape}")
 
-            for key, input_batch in inputs.items():
-                print(key)
-                print(input_batch.shape)
+            
             #    inputs[key] = input_batch.repeat_interleave(torch.tensor(target_counts).cuda(), dim=0)
             sample_indices = np.array(sample_indices).repeat(target_counts, axis=0)
 
@@ -323,7 +321,7 @@ class QwenFeatureVisualization:
         targets,
         additional_forward_kwargs,
     ):
-        print("raw relevance:", rel.shape)
+        #print("raw relevance:", rel.shape)
 
         if rel.shape[0] != len(data_indices):
             rel = self.aggregate_qwen_vision_by_image(
@@ -332,7 +330,7 @@ class QwenFeatureVisualization:
                 mode="sum",
             )
 
-        print("image-level relevance:", rel.shape)
+        #print("image-level relevance:", rel.shape)
 
         assert rel.shape[0] == len(data_indices), (
             f"rel batch {rel.shape[0]} != "
@@ -360,7 +358,7 @@ class QwenFeatureVisualization:
         targets,
         additional_forward_kwargs,
     ):
-        print("raw activation:", act.shape)
+        #print("raw activation:", act.shape)
 
         # First convert packed Qwen visual tokens -> images
         if act.shape[0] != len(data_indices):
@@ -370,7 +368,7 @@ class QwenFeatureVisualization:
                 mode="max",
             )
 
-        print("image-level activation:", act.shape)
+        #print("image-level activation:", act.shape)
 
         # Now duplicate-target cleanup is valid,
         # because dim 0 really is batch/images.
@@ -383,8 +381,8 @@ class QwenFeatureVisualization:
         targets = targets[unique_indices]
         act = act[unique_indices]
 
-        print("unique indices:", len(unique_indices))
-        print("analyze acts:", act.shape)
+        #print("unique indices:", len(unique_indices))
+        #print("analyze acts:", act.shape)
 
         d_c_sorted, act_c_sorted, rf_c_sorted, t_c_sorted = (
             self.ActMax.analyze_layer(
@@ -745,7 +743,7 @@ class QwenFeatureVisualization:
         for l_name in layer_c_ind:
 
             c_indices = layer_c_ind[l_name]
-            print("Layer:", l_name)
+            #print("Layer:", l_name)
             pbar = tqdm(total=len(c_indices), dynamic_ncols=True)
 
             for c_id in c_indices:
