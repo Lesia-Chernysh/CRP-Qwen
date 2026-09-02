@@ -83,50 +83,19 @@ class CondAttribution:
 
             torch.autograd.backward(pred, grad_mask.to(pred), retain_graph=generate)
 
-    def relevance_init(self, prediction, target_list, init_rel):
-        """
+    def relevance_init(self, prediction, target_list, init_rel=None):
+      # prediction: [B, S, V]
 
-        Parameters:
-        -----------
-            prediction: torch.Tensor
-                output of model forward pass
-            target_list: list/numpy.ndarray or None
-                list of all 'y' values of condition dictionaries. Indices are used to set the
-                initial relevance to prediction values. If target_list is None and init_rel is None,
-                relevance is initialized at all indices with prediction values. If start_layer is
-                used, target_list is set to None.
-            init_rel: torch.Tensor or None
-                used to initialize relevance instead of prediction. If None, target_list is used.
-                Please make sure to choose the right shape.
-        """
-        if callable(init_rel):
-            output_selection = init_rel(prediction)
-        elif isinstance(init_rel, torch.Tensor):
-            output_selection = init_rel
-        elif isinstance(init_rel, (int, np.integer)):
-            output_selection = torch.full(prediction.shape, init_rel)
-        else:
-            output_selection = prediction
+      if init_rel is not None:
+          return init_rel(prediction)
 
-        print("prediction shape:", prediction.shape)
-        print("target_list:", target_list)
+      mask = torch.zeros_like(prediction)
 
-        print("output_selection shape:", output_selection.shape)
+      for i, targets in enumerate(target_list):
+          # targets are vocab IDs
+          mask[i, -1, targets] = prediction[i, -1, targets]
 
-        for i, targets in enumerate(target_list):
-            print(
-                "i:", i,
-                "targets:", targets,
-                "output_selection[i] shape:", output_selection[i].shape,
-            )
-
-        if target_list:
-            mask = torch.zeros_like(output_selection)
-            for i, targets in enumerate(target_list):
-                mask[i, targets] = output_selection[i, targets]
-            output_selection = mask
-
-        return output_selection
+      return mask
 
     # TODO: differs from the one for CNNs, where they sum over the 1. dim
     def heatmap_modifier(self, inputs, on_device=None):
