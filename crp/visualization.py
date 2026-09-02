@@ -20,11 +20,10 @@ from crp.image import vis_img_heatmap, vis_opaque_img
 from crp.cache import Cache
 
 
-class QwenTFeatureVisualization:
-
+class QwenFeatureVisualization:
     def __init__(
             self, attribution: CondAttribution, dataset, layer_map: Dict[str, Concept], processor=None,
-            max_target="sum", abs_norm=True, path="FeatureVisualization", device=None, cache: Cache=None):
+            max_target="sum", abs_norm=True, path="FeatureVisualization", device=None, cache: Cache = None):
 
         self.dataset = dataset
         self.layer_map = layer_map
@@ -42,7 +41,6 @@ class QwenTFeatureVisualization:
 
         self.Cache = cache
 
-    
     def run(self, data_start, data_end, composite: Composite = None, batch_size=32, checkpoint=500, on_device=None):
 
         print("Running Analysis...")
@@ -53,8 +51,8 @@ class QwenTFeatureVisualization:
 
         return saved_files
 
-    
-    def run_distributed(self, data_start, data_end, composite: Composite = None, batch_size=32, checkpoint=500, on_device=None):
+    def run_distributed(self, data_start, data_end, composite: Composite = None, batch_size=32, checkpoint=500,
+                        on_device=None):
         """
         max batch_size = max(multi_targets) * data_batch
         data_end: exclusively counted
@@ -74,6 +72,7 @@ class QwenTFeatureVisualization:
 
         # feature visualization is performed inside forward and backward hook of layers
         name_map, dict_inputs = [], {}
+
         for l_name, concept in self.layer_map.items():
             hook = FeatVisHook(self, concept, l_name, dict_inputs, on_device)
             name_map.append(([l_name], hook))
@@ -83,7 +82,7 @@ class QwenTFeatureVisualization:
             composite.register(self.attribution.model)
         fv_composite.register(self.attribution.model)
 
-        pbar = tqdm(total=batches, dynamic_ncols=True)            
+        pbar = tqdm(total=batches, dynamic_ncols=True)
 
         for b in range(batches):
 
@@ -94,25 +93,98 @@ class QwenTFeatureVisualization:
 
             # handle multiple targets (vqa has multiple answers per question)
             target_counts = list(map(len, multi_targets))
-            targets = np.array(list(itertools.chain(*multi_targets))) # flatten 2d list
-            # copy data for every target in target list 
-            print(inputs["image_grid_thw"])
+            print(f"target_counts: {target_counts}")
+
+            targets = np.array(list(itertools.chain(*multi_targets)))  # flatten 2d list
+            # copy data for every target in target list
+
+            target_counts_t = torch.as_tensor(
+                target_counts,
+                device=inputs["input_ids"].device,
+                dtype=torch.long,
+            )
+
+            original_grid = inputs["image_grid_thw"]  # 224 / patch_kernel = 224/14 = 16
+            original_pixels = inputs["pixel_values"]  # shape: (2560, 1176), 1176 = 14*14*2(temporal)*3(channels)
+
+            print("original pixels", original_pixels.shape)
+            # Number of packed visual rows belonging to each image
+            '''
+            Instead of shape (batch, hidden, n_neurons), Qwen packs inputs into
+            shape (batch*h_patch*w_patch, n_neurons). 
+            h_patch, w_patch = h_image / kernel_patch_h, w_patch / kernel_patch_w
+            E.g. batch with 10 images of size 224x224 will form (224/14)^2 = 16*16 = 256 patches,
+            and the input will have shape (2560, n_neurons)
+            '''
+            patch_counts = original_grid.prod(dim=1).tolist()  # --> [h_patch*w_patch for im in batch]
+
+            pixel_chunks = torch.split(
+                original_pixels,
+                patch_counts,
+                dim=0,
+            )  # --> tuple(
+               #      tensor (shape=256, n_neurons),
+               #      tensor (shape=256, n_neurons),
+               #      ...
+               #   ), len(tuple)=2560/256=10
+
+            print(f"patch_counts: {patch_counts}")
+
+            # Duplicate each complete image's patches according to CRP target count
+            new_pixel_chunks = []
+
+            for chunk, repeats in zip(pixel_chunks, target_counts):
+                for _ in range(int(repeats)):
+                    new_pixel_chunks.append(chunk)
+
+            inputs["pixel_values"] = torch.cat(new_pixel_chunks, dim=0)
+
+            # image_grid_thw IS image-based, so normal repeat_interleave works
+            inputs["image_grid_thw"] = original_grid.repeat_interleave(
+                target_counts_t,
+                dim=0,
+            )
+
+            # Text tensors are batch-based
+            for key in [
+                "input_ids",
+                "attention_mask"
+            ]:
+                if key in inputs:
+                    inputs[key] = inputs[key].repeat_interleave(
+                        target_counts_t,
+                        dim=0,
+                    )  # --> (batch, text/multimodal sequence length)
+
+                    print(f"repeat {key}. {inputs[key].shape}")
+
             for key, input_batch in inputs.items():
                 print(key)
                 print(input_batch.shape)
-
-                inputs[key] = input_batch.repeat_interleave(torch.tensor(target_counts).cuda(), dim=0)
+            #    inputs[key] = input_batch.repeat_interleave(torch.tensor(target_counts).cuda(), dim=0)
             sample_indices = np.array(sample_indices).repeat(target_counts, axis=0)
-            
+
             conditions = [{self.attribution.MODEL_OUTPUT_NAME: [t]} for t in targets]
             # dict_inputs is linked to FeatHooks
+            dict_inputs["input_ids"] = inputs.input_ids
             dict_inputs["sample_indices"] = sample_indices
             dict_inputs["targets"] = targets
-            additional_forward_kwargs = {"token_type_ids":inputs.token_type_ids, "attention_mask":inputs.attention_mask, "pixel_mask":inputs.pixel_mask}
+            additional_forward_kwargs = {
+              "attention_mask": inputs.attention_mask,
+              "image_grid_thw": inputs.image_grid_thw
+              }
             dict_inputs["additional_forward_kwargs"] = additional_forward_kwargs
 
             # composites are already registered before
-            self.attribution((inputs.pixel_values, inputs.input_embeds), conditions, None, exclude_parallel=False, additional_forward_kwargs=additional_forward_kwargs)
+            attr = self.attribution(
+                inputs,  # input is a tensor or a tuple of tensors
+                conditions,
+                composite=composite,
+                record_layer=list(self.layer_map.keys()),
+                additional_forward_kwargs=additional_forward_kwargs,
+            )
+            # self.attribution((inputs.pixel_values, inputs.input_embeds), conditions, None, exclude_parallel=False,
+            #                 additional_forward_kwargs=additional_forward_kwargs)
 
             if b % checkpoint == checkpoint - 1:
                 self._save_results((last_checkpoint, b + 1))
@@ -129,11 +201,11 @@ class QwenTFeatureVisualization:
 
         return self.saved_checkpoints
 
-
     def get_data_concurrently(self, indices: Union[List, np.ndarray, torch.Tensor]):
-        
-        _qids, images, questions, answers = zip(*[self.dataset[i] for i in indices])
 
+        images, questions, answers = zip(*[self.dataset[i] for i in indices])
+
+        # process images in batches
         prompts = [
             [
                 {
@@ -167,47 +239,172 @@ class QwenTFeatureVisualization:
             images=list(images),
             padding=True,
             return_tensors="pt",
-        ).to(self.device)
+        ).to(self.device)  # --> class 'transformers.feature_extraction_utils.BatchFeature'
 
-        targets = [[self.attribution.model.config.label2id[label] for label in labels if label in self.attribution.model.hf_model.config.label2id] for labels in answers]
-    
+        # 'transformers.feature_extraction_utils.BatchFeature' is a dict-like object with such keys:
+        # 'input_ids', 'attention_mask', 'pixel_values', 'image_grid_thw'
+
+        label2id = {
+            class_names[class_id]: idx
+            for idx, class_id in enumerate(self.dataset.classes)
+            if class_id in class_names
+        }
+        targets = [
+            [label2id[label]]
+            for label in answers
+            if label in label2id
+        ]
+        # targets = [[self.attribution.model.hf_model.config.label2id[label] for label in labels if
+        #            label in self.attribution.model.hf_model.config.label2id] for labels in answers]
+
         inputs.to(self.attribution.model.device)
-        inputs["input_embeds"] = self.attribution.model.get_input_embeddings()(inputs.input_ids).detach().requires_grad_(True)
+        inputs["input_embeds"] = self.attribution.model.get_input_embeddings()(
+            inputs.input_ids).detach().requires_grad_(True)
         inputs.pixel_values.requires_grad_(True)
 
         return inputs, targets
 
-        
-    @torch.no_grad()
-    def analyze_relevance(self, rel, layer_name, concept, data_indices, targets, additional_forward_kwargs):
+    def aggregate_qwen_vision_by_image(
+        self,
+        x,
+        additional_forward_kwargs,
+        mode="sum",
+    ):
         """
-        Finds input samples that maximally activate each neuron in a layer and most relevant samples
+        x:
+            [total_visual_tokens, channels]
+
+        returns:
+            [batch, channels]
         """
-        d_c_sorted, rel_c_sorted, rf_c_sorted, t_c_sorted = self.RelMax.analyze_layer(
-            torch.abs(rel), concept, layer_name, data_indices, targets, additional_forward_kwargs)
 
-        self.RelStats.analyze_layer(d_c_sorted, rel_c_sorted, rf_c_sorted, t_c_sorted, layer_name)
+        grid = additional_forward_kwargs["image_grid_thw"]
 
+        token_counts = grid.prod(dim=1).long()
+
+        assert token_counts.sum().item() == x.shape[0], (
+            f"grid describes {token_counts.sum().item()} visual tokens, "
+            f"but tensor has {x.shape[0]}"
+        )
+
+        chunks = torch.split(
+            x,
+            token_counts.tolist(),
+            dim=0,
+        )
+
+        if mode == "sum":
+            return torch.stack(
+                [chunk.sum(dim=0) for chunk in chunks],
+                dim=0,
+            )
+
+        elif mode == "mean":
+            return torch.stack(
+                [chunk.mean(dim=0) for chunk in chunks],
+                dim=0,
+            )
+
+        elif mode == "max":
+            return torch.stack(
+                [chunk.amax(dim=0) for chunk in chunks],
+                dim=0,
+            )
+
+        raise ValueError(f"Unknown aggregation mode: {mode}")
     
     @torch.no_grad()
-    def analyze_activation(self, act, layer_name, concept, data_indices, targets, additional_forward_kwargs):
-        """
-        Finds input samples that maximally activate each neuron in a layer and most relevant samples
-        """
+    def analyze_relevance(
+        self,
+        rel,
+        layer_name,
+        concept,
+        data_indices,
+        targets,
+        additional_forward_kwargs,
+    ):
+        print("raw relevance:", rel.shape)
 
-        # activation analysis once per sample if multi target dataset
-        unique_indices = np.unique(data_indices, return_index=True)[1]
-        
+        if rel.shape[0] != len(data_indices):
+            rel = self.aggregate_qwen_vision_by_image(
+                rel,
+                additional_forward_kwargs,
+                mode="sum",
+            )
+
+        print("image-level relevance:", rel.shape)
+
+        assert rel.shape[0] == len(data_indices), (
+            f"rel batch {rel.shape[0]} != "
+            f"number of samples {len(data_indices)}"
+        )
+
+        d_c_sorted, rel_c_sorted, rf_c_sorted, t_c_sorted = (
+            self.RelMax.analyze_layer(
+                torch.abs(rel),
+                concept,
+                layer_name,
+                data_indices,
+                targets,
+                additional_forward_kwargs,
+            )
+        )
+
+    @torch.no_grad()
+    def analyze_activation(
+        self,
+        act,
+        layer_name,
+        concept,
+        data_indices,
+        targets,
+        additional_forward_kwargs,
+    ):
+        print("raw activation:", act.shape)
+
+        # First convert packed Qwen visual tokens -> images
+        if act.shape[0] != len(data_indices):
+            act = self.aggregate_qwen_vision_by_image(
+                act,
+                additional_forward_kwargs,
+                mode="max",
+            )
+
+        print("image-level activation:", act.shape)
+
+        # Now duplicate-target cleanup is valid,
+        # because dim 0 really is batch/images.
+        unique_indices = np.unique(
+            data_indices,
+            return_index=True,
+        )[1]
+
         data_indices = data_indices[unique_indices]
-        act = act[unique_indices]
         targets = targets[unique_indices]
+        act = act[unique_indices]
 
-        d_c_sorted, act_c_sorted, rf_c_sorted, t_c_sorted = self.ActMax.analyze_layer(
-            act, concept, layer_name, data_indices, targets, additional_forward_kwargs)
+        print("unique indices:", len(unique_indices))
+        print("analyze acts:", act.shape)
 
-        self.ActStats.analyze_layer(d_c_sorted, act_c_sorted, rf_c_sorted, t_c_sorted, layer_name)
+        d_c_sorted, act_c_sorted, rf_c_sorted, t_c_sorted = (
+            self.ActMax.analyze_layer(
+                act,
+                concept,
+                layer_name,
+                data_indices,
+                targets,
+                additional_forward_kwargs,
+            )
+        )
 
-    
+        self.ActStats.analyze_layer(
+            d_c_sorted,
+            act_c_sorted,
+            rf_c_sorted,
+            t_c_sorted,
+            layer_name,
+        )
+
     def _save_results(self, d_index=None):
 
         self.saved_checkpoints["r_max"].extend(self.RelMax._save_results(d_index))
@@ -215,7 +412,6 @@ class QwenTFeatureVisualization:
         self.saved_checkpoints["r_stats"].extend(self.RelStats._save_results(d_index))
         self.saved_checkpoints["a_stats"].extend(self.ActStats._save_results(d_index))
 
-    
     def collect_results(self, checkpoints: Dict[str, List[str]], d_index: Tuple[int, int] = None):
 
         saved_files = {}
@@ -226,7 +422,6 @@ class QwenTFeatureVisualization:
         saved_files["a_stats"] = self.ActStats.collect_results(checkpoints["a_stats"], d_index)
 
         return saved_files
-        
 
     def cache_reference(func):
         """
@@ -234,6 +429,7 @@ class QwenTFeatureVisualization:
         reference samples are cached i.e. saved after computing a visualization with a 'plot_fn' (argument of get_max_reference) or
         loaded from the disk if available.
         """
+
         @functools.wraps(func)
         def wrapper(self, *args, **kwargs):
             """
@@ -242,7 +438,7 @@ class QwenTFeatureVisualization:
             overwrite: boolean
                 If set to True, already computed reference samples are computed again (overwritten).
             """
-            
+
             overwrite = kwargs.pop("overwrite", False)
             args_f = inspect.getcallargs(func, self, *args, **kwargs)
             plot_fn = args_f["plot_fn"]
@@ -250,7 +446,8 @@ class QwenTFeatureVisualization:
             if self.Cache is None or plot_fn is None:
                 return func(**args_f)
 
-            r_range, mode, l_name, rf, composite = args_f["r_range"], args_f["mode"], args_f["layer_name"], args_f["rf"], args_f["composite"]
+            r_range, mode, l_name, rf, composite = args_f["r_range"], args_f["mode"], args_f["layer_name"], args_f[
+                "rf"], args_f["composite"]
             f_name, plot_name = func.__name__, plot_fn.__name__
             if f_name == "get_max_reference":
                 indices = args_f["concept_ids"]
@@ -264,19 +461,20 @@ class QwenTFeatureVisualization:
                 ref_c, not_found = self.Cache.load(indices, l_name, mode, r_range, composite, rf, f_name, plot_name)
 
             if len(not_found):
-                
+
                 for id in not_found:
-                    
+
                     args_f["r_range"] = not_found[id]
 
                     if f_name == "get_max_reference":
-                        args_f["concept_ids"]  = id
+                        args_f["concept_ids"] = id
                         ref_c_left = func(**args_f)
                     elif f_name == "get_stats_reference":
                         args_f["targets"] = int(id.split(":")[-1])
                         ref_c_left = func(**args_f)
                     else:
-                        raise ValueError("Only the methods 'get_max_reference' and 'get_stats_reference' can be decorated.")
+                        raise ValueError(
+                            "Only the methods 'get_max_reference' and 'get_stats_reference' can be decorated.")
 
                     self.Cache.save(ref_c_left, l_name, mode, not_found[id], composite, rf, f_name, plot_name)
 
@@ -288,12 +486,13 @@ class QwenTFeatureVisualization:
 
     @cache_reference
     def get_max_reference(
-            self, concept_ids: Union[int,list], layer_name: str, mode="relevance", r_range: Tuple[int, int] = (0, 8), attribute=False,
-            rf=False, plot_fn=vis_img_heatmap, batch_size=32)-> Dict:
+            self, concept_ids: Union[int, list], layer_name: str, mode="relevance", r_range: Tuple[int, int] = (0, 8),
+            attribute=False,
+            rf=False, plot_fn=vis_img_heatmap, batch_size=32) -> Dict:
         """
         Retrieve reference samples for a list of concepts in a layer. Relevance and Activation Maximization
         are available if FeatureVisualization was computed for the mode. In addition, conditional heatmaps can be computed on reference samples.
-        If the crp.concept class (supplied to the FeatureVisualization layer_map) implements masking for a single neuron in the 'mask_rf' method, 
+        If the crp.concept class (supplied to the FeatureVisualization layer_map) implements masking for a single neuron in the 'mask_rf' method,
         the reference samples and heatmaps can be cropped using the receptive field of the most relevant or active neuron.
 
         Parameters:
@@ -301,7 +500,7 @@ class QwenTFeatureVisualization:
         concept_ids: int or list
         layer_name: str
         mode: "relevance" or "activation"
-            Relevance or Activation Maximization 
+            Relevance or Activation Maximization
         r_range: Tuple(int, int)
             Range of N-top reference samples. For example, (3, 7) corresponds to the Top-3 to -6 samples.
             Argument must be a closed set i.e. second element of tuple > first element.
@@ -311,7 +510,7 @@ class QwenTFeatureVisualization:
             If True, compute the CRP heatmap for the most relevant/most activating neuron only to restrict the conditonal heatmap
             on the receptive field.
         plot_fn: callable function with signature (samples: torch.Tensor, heatmaps: torch.Tensor, rf: boolean) or None
-            Draws reference images. The function receives as input the samples used for computing heatmaps before preprocessing 
+            Draws reference images. The function receives as input the samples used for computing heatmaps before preprocessing
             with self.preprocess_data and the final heatmaps after computation. In addition, the boolean flag 'rf' is passed to it.
             The return value of the function should correspond to the Cache supplied to the FeatureVisualization object (if available).
             If None, the raw tensors are returned.
@@ -339,22 +538,23 @@ class QwenTFeatureVisualization:
             warnings.warn("The receptive field is only computed, if you set `attribute`.")
 
         for c_id in concept_ids:
-
             d_indices = d_c_sorted[r_range[0]:r_range[1], c_id]
             n_indices = rf_c_sorted[r_range[0]:r_range[1], c_id]
 
-            ref_c[c_id] = self._load_ref_and_attribution(d_indices, c_id, n_indices, layer_name, attribute, rf, plot_fn, batch_size)
+            ref_c[c_id] = self._load_ref_and_attribution(d_indices, c_id, n_indices, layer_name, attribute, rf, plot_fn,
+                                                         batch_size)
 
         return ref_c
 
     @cache_reference
-    def get_stats_reference(self, concept_ids: Union[int, list], layer_name: str, targets: Union[int, list], mode="relevance", r_range: Tuple[int, int] = (0, 8),
-            attribute=False, rf=False, plot_fn=vis_img_heatmap, batch_size=32):
+    def get_stats_reference(self, concept_ids: Union[int, list], layer_name: str, targets: Union[int, list],
+                            mode="relevance", r_range: Tuple[int, int] = (0, 8),
+                            attribute=False, rf=False, plot_fn=vis_img_heatmap, batch_size=32):
         """
         Retreive reference samples for a single concept in a layer wrt. different explanation targets i.e. returns the reference samples
-        that are computed by self.compute_stats. Relevance and Activation are availble if FeatureVisualization was computed for the statitics mode. 
-        In addition, conditional heatmaps can be computed on reference samples. If the crp.concept class (supplied to the FeatureVisualization layer_map) 
-        implements masking for a single neuron in the 'mask_rf' method, the reference samples and heatmaps can be cropped using the receptive field of 
+        that are computed by self.compute_stats. Relevance and Activation are availble if FeatureVisualization was computed for the statitics mode.
+        In addition, conditional heatmaps can be computed on reference samples. If the crp.concept class (supplied to the FeatureVisualization layer_map)
+        implements masking for a single neuron in the 'mask_rf' method, the reference samples and heatmaps can be cropped using the receptive field of
         the most relevant or active neuron.
 
         Parameters:
@@ -362,7 +562,7 @@ class QwenTFeatureVisualization:
         concept_ids: int or list
         layer_name: str
         mode: "relevance" or "activation"
-            Relevance or Activation Maximization 
+            Relevance or Activation Maximization
         r_range: Tuple(int, int)
             Range of N-top reference samples. For example, (3, 7) corresponds to the Top-3 to -6 samples.
             Argument must be a closed set i.e. second element of tuple > first element.
@@ -372,7 +572,7 @@ class QwenTFeatureVisualization:
             If True, compute the CRP heatmap for the most relevant/most activating neuron only to restrict the conditonal heatmap
             on the receptive field.
         plot_fn: callable function with signature (samples: torch.Tensor, heatmaps: torch.Tensor, rf: boolean)
-            Draws reference images. The function receives as input the samples used for computing heatmaps before preprocessing 
+            Draws reference images. The function receives as input the samples used for computing heatmaps before preprocessing
             with self.preprocess and the final heatmaps after computation. In addition, the boolean flag 'rf' is passed to it.
             The return value of the function should correspond to the Cache supplied to the FeatureVisualization object (if available).
             If None, the raw tensors are returned.
@@ -385,8 +585,7 @@ class QwenTFeatureVisualization:
             Key values correspond to target indices and values are reference samples. The values depend on the implementation of
             the 'plot_fn'.
         """
-            
-        
+
         ref_t = {}
         if not isinstance(targets, Iterable):
             targets = [targets]
@@ -395,21 +594,22 @@ class QwenTFeatureVisualization:
         if mode == "relevance":
             path = self.RelStats.PATH
         elif mode == "activation":
-            path = self.ActStats.PATH 
+            path = self.ActStats.PATH
         else:
             raise ValueError("`mode` must be `relevance` or `activation`")
-        
+
         if rf and not attribute:
             warnings.warn("The receptive field is only computed, if you set `attribute`.")
 
         for concept_id in concept_ids:
             for t in targets:
-                
                 d_c_sorted, _, rf_c_sorted = load_statistics(path, layer_name, t)
                 d_indices = d_c_sorted[r_range[0]:r_range[1], concept_id]
                 n_indices = rf_c_sorted[r_range[0]:r_range[1], concept_id]
-    
-                ref_t[f"{concept_id}:{t}"] = self._load_ref_and_attribution(d_indices, concept_id, n_indices, layer_name, attribute, rf, plot_fn, batch_size)
+
+                ref_t[f"{concept_id}:{t}"] = self._load_ref_and_attribution(d_indices, concept_id, n_indices,
+                                                                            layer_name, attribute, rf, plot_fn,
+                                                                            batch_size)
 
         return ref_t
 
@@ -428,7 +628,8 @@ class QwenTFeatureVisualization:
         else:
             return inputs
 
-    def _attribution_on_reference(self, inputs, concept_id: int, layer_name: str, composite, rf=False, neuron_ids: list=[], batch_size=32):
+    def _attribution_on_reference(self, inputs, concept_id: int, layer_name: str, composite, rf=False,
+                                  neuron_ids: list = [], batch_size=32):
 
         n_samples = len(inputs.input_ids)
         if n_samples > batch_size:
@@ -446,18 +647,24 @@ class QwenTFeatureVisualization:
             for key, input_batch in inputs.items():
                 inputs[key] = input_batch[b * batch_size: (b + 1) * batch_size]
 
-            conditions = [{layer_name: [concept_id]}] 
+            conditions = [{layer_name: [concept_id]}]
             # initialize relevance with activation before non-linearity (could be changed in a future release)
-            attr = self.attribution((inputs.pixel_values, inputs.input_embeds), conditions, composite, mask_map=self.layer_map[layer_name].mask, start_layer=layer_name, on_device=self.device, exclude_parallel=False, additional_forward_kwargs={"token_type_ids":inputs.token_type_ids, "attention_mask":inputs.attention_mask, "pixel_mask":inputs.pixel_mask}, rf=rf)
+            attr = self.attribution((inputs.pixel_values, inputs.input_embeds), conditions, composite,
+                                    mask_map=self.layer_map[layer_name].mask, start_layer=layer_name,
+                                    on_device=self.device, exclude_parallel=False,
+                                    additional_forward_kwargs={"token_type_ids": inputs.token_type_ids,
+                                                               "attention_mask": inputs.attention_mask,
+                                                               "pixel_mask": inputs.pixel_mask}, rf=rf)
 
             img_heatmaps.extend(attr.heatmap[0].sum(1))
             txt_heatmaps.extend(attr.heatmap[1].sum(-1))
 
         return (img_heatmaps, txt_heatmaps)
 
-    def compute_stats(self, concept_id, layer_name: str, mode="relevance", top_N=5, mean_N=10, norm=False) -> Tuple[list, list]:
+    def compute_stats(self, concept_id, layer_name: str, mode="relevance", top_N=5, mean_N=10, norm=False) -> Tuple[
+        list, list]:
         """
-        Computes statistics about the targets i.e. output classes for which the concept with index 'concept_id' in layer 'layer_name' 
+        Computes statistics about the targets i.e. output classes for which the concept with index 'concept_id' in layer 'layer_name'
         is most relevant or most activated. Statistics must be computed before utilizing this method.
 
         Parameters:
@@ -477,23 +684,23 @@ class QwenTFeatureVisualization:
         --------
         sorted_t, sorted_val as tuple
         sorted_t: list of most relevant targets
-        sorted_val: list of respective mean relevance/activation values for each target 
+        sorted_val: list of respective mean relevance/activation values for each target
         """
 
         if mode == "relevance":
             path = self.RelStats.PATH
         elif mode == "activation":
-            path = self.ActStats.PATH 
+            path = self.ActStats.PATH
         else:
             raise ValueError("`mode` must be `relevance` or `activation`")
-        
+
         targets = load_stat_targets(path)
 
         rel_target = torch.zeros(len(targets))
         for i, t in enumerate(targets):
             _, rel_c_sorted, _ = load_statistics(path, layer_name, t)
             rel_target[i] = float(rel_c_sorted[:mean_N, concept_id].mean())
-        
+
         args = torch.argsort(rel_target, descending=True)[:top_N]
 
         sorted_t = targets[args]
@@ -501,7 +708,7 @@ class QwenTFeatureVisualization:
 
         if norm:
             sorted_val = sorted_val / sorted_val[0]
-        
+
         return sorted_t, sorted_val
 
     def _save_precomputed(self, s_tensor, h_tensor, index, plot_list, layer_name, mode, r_range, composite, rf, f_name):
@@ -510,7 +717,9 @@ class QwenTFeatureVisualization:
             ref = {index: plot_fn(s_tensor, h_tensor, rf)}
             self.Cache.save(ref, layer_name, mode, r_range, composite, rf, f_name, plot_fn.__name__)
 
-    def precompute_ref(self, layer_c_ind:Dict[str, List], composite: Composite, rf=True, stats=False, top_N=4, mean_N=10, mode="relevance", r_range: Tuple[int, int] = (0, 8), plot_list=[vis_opaque_img], batch_size=32):
+    def precompute_ref(self, layer_c_ind: Dict[str, List], composite: Composite, rf=True, stats=False, top_N=4,
+                       mean_N=10, mode="relevance", r_range: Tuple[int, int] = (0, 8), plot_list=[vis_opaque_img],
+                       batch_size=32):
         """
         Precomputes and saves all reference samples resulting from 'self.get_ref_samples' and 'self.get_stats_reference' for concepts supplied in 'layer_c_ind'.
 
@@ -526,10 +735,10 @@ class QwenTFeatureVisualization:
         REMAINING PARAMETERS: correspond to 'self.get_ref_samples' and 'self.get_stats_reference'
         """
 
-
         if self.Cache is None:
-            raise ValueError("You must supply a crp.Cache object to the 'FeatureVisualization' class to precompute reference images!")
-        
+            raise ValueError(
+                "You must supply a crp.Cache object to the 'FeatureVisualization' class to precompute reference images!")
+
         if composite is None:
             raise ValueError("You must supply a zennit.Composite object to precompute reference images!")
 
@@ -541,16 +750,21 @@ class QwenTFeatureVisualization:
 
             for c_id in c_indices:
 
-                s_tensor, h_tensor = self.get_max_reference(c_id, l_name, mode, r_range, composite, rf, None, batch_size)[c_id]
+                s_tensor, h_tensor = \
+                    self.get_max_reference(c_id, l_name, mode, r_range, composite, rf, None, batch_size)[c_id]
 
-                self._save_precomputed(s_tensor, h_tensor, c_id, plot_list, l_name, mode, r_range, composite, rf, "get_max_reference")
-                                   
+                self._save_precomputed(s_tensor, h_tensor, c_id, plot_list, l_name, mode, r_range, composite, rf,
+                                       "get_max_reference")
+
                 if stats:
                     targets, _ = self.compute_stats(c_id, l_name, mode, top_N, mean_N)
                     for t in targets:
                         stat_index = f"{c_id}:{t}"
-                        s_tensor, h_tensor = self.get_stats_reference(c_id, l_name, t, mode, r_range, composite, rf, None, batch_size)[stat_index]
-                        self._save_precomputed(s_tensor, h_tensor, stat_index, plot_list, l_name, mode, r_range, composite, rf, "get_stats_reference")
+                        s_tensor, h_tensor = \
+                            self.get_stats_reference(c_id, l_name, t, mode, r_range, composite, rf, None, batch_size)[
+                                stat_index]
+                        self._save_precomputed(s_tensor, h_tensor, stat_index, plot_list, l_name, mode, r_range,
+                                               composite, rf, "get_stats_reference")
 
                 pbar.update(1)
 
