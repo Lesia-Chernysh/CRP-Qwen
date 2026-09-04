@@ -123,10 +123,14 @@ class CondAttribution:
 
         n_conditions = len(conditions)
 
-        #print(
-        #    f"CRP batch={batch_size}, "
-        #    f"conditions={n_conditions}"
-        #)
+        print(
+            f"CRP batch={batch_size}, "
+            f"conditions={n_conditions}"
+        )
+        # Same condition for every sample
+        if n_conditions == 1 and batch_size > 1:
+            conditions = conditions * batch_size
+            n_conditions = batch_size
 
         if batch_size != n_conditions:
             raise RuntimeError(
