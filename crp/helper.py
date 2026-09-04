@@ -82,15 +82,94 @@ def get_output_shapes(model, single_sample: torch.tensor, record_layers: List[st
     return output_shapes
 
 
+from pathlib import Path
+import re
+import numpy as np
+
+
 def load_maximization(path_folder, layer_name):
+    path_folder = Path(path_folder)
 
-    filename = f"{layer_name}_"
+    # Matches:
+    # <layer_name>_0_100_data.npy
+    # <layer_name>_100_200_data.npy
+    #
+    # and similarly rel/rf.
+    pattern = re.compile(
+        rf"^{re.escape(layer_name)}_(\d+)_(\d+)_data\.npy$"
+    )
 
-    d_c_sorted = np.load(Path(path_folder) / Path(filename + "data.npy"), mmap_mode="r")
-    rel_c_sorted = np.load(Path(path_folder) / Path(filename + "rel.npy"), mmap_mode="r")
-    rf_c_sorted = np.load(Path(path_folder) / Path(filename + "rf.npy"), mmap_mode="r")
+    checkpoint_files = []
 
-    return MaxStats(d_c_sorted, rel_c_sorted, rf_c_sorted)
+    for path in path_folder.glob(f"{layer_name}_*_data.npy"):
+        match = pattern.match(path.name)
+
+        if match:
+            start = int(match.group(1))
+            end = int(match.group(2))
+            checkpoint_files.append((start, end, path))
+
+    # If no checkpoint files exist, fall back to the old final-file format.
+    if not checkpoint_files:
+        print("no checkpoint files")
+        filename = f"{layer_name}_"
+
+        d_c_sorted = np.load(
+            path_folder / f"{filename}data.npy",
+            mmap_mode="r",
+        )
+        rel_c_sorted = np.load(
+            path_folder / f"{filename}rel.npy",
+            mmap_mode="r",
+        )
+        rf_c_sorted = np.load(
+            path_folder / f"{filename}rf.npy",
+            mmap_mode="r",
+        )
+
+        return MaxStats(
+            d_c_sorted,
+            rel_c_sorted,
+            rf_c_sorted,
+        )
+
+    # Sort checkpoints by their start/end ranges:
+    # 0_100, 100_200, 200_300, ...
+    checkpoint_files.sort(key=lambda x: (x[0], x[1]))
+
+    data_parts = []
+    rel_parts = []
+    rf_parts = []
+
+    for start, end, data_path in checkpoint_files:
+        prefix = f"{layer_name}_{start}_{end}_"
+
+        rel_path = path_folder / f"{prefix}rel.npy"
+        rf_path = path_folder / f"{prefix}rf.npy"
+
+        if not rel_path.exists():
+            raise FileNotFoundError(
+                f"Missing relevance checkpoint: {rel_path}"
+            )
+
+        if not rf_path.exists():
+            raise FileNotFoundError(
+                f"Missing RF checkpoint: {rf_path}"
+            )
+
+        data_parts.append(np.load(data_path))
+        rel_parts.append(np.load(rel_path))
+        rf_parts.append(np.load(rf_path))
+
+    d_c_sorted = np.concatenate(data_parts, axis=0)
+    rel_c_sorted = np.concatenate(rel_parts, axis=0)
+    rf_c_sorted = np.concatenate(rf_parts, axis=0)
+
+    return MaxStats(
+        d_c_sorted,
+        rel_c_sorted,
+        rf_c_sorted,
+    )
 
 def load_stat_targets(path_folder):
 
