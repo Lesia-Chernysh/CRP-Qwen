@@ -68,9 +68,11 @@ class FeatVisHook:
         self.layer_name = layer_name
         self.dict_inputs = dict_inputs
         self.on_device = on_device
-
+        
     def post_forward(self, module, input, output):
         '''Register a backward-hook to the resulting tensor right after the forward.'''
+
+        print(f"hooks/post_forward. dict_inputs: {self.dict_inputs.keys()}")
 
         s_indices, targets, additional_forward_kwargs = self.dict_inputs["sample_indices"], self.dict_inputs["targets"], self.dict_inputs["additional_forward_kwargs"]
         
@@ -101,6 +103,7 @@ class FeatVisHook:
 
     def backward(self, module, grad):
         '''Hook applied during backward-pass'''
+        print(f"hooks/backward. dict_inputs: {self.dict_inputs.keys()}")
 
         s_indices, targets, additional_forward_kwargs = self.dict_inputs["sample_indices"], self.dict_inputs["targets"], self.dict_inputs["additional_forward_kwargs"]
         relevance = grad.detach().to(self.on_device) if self.on_device else grad.detach()
