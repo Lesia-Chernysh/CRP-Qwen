@@ -229,7 +229,7 @@ class QwenFeatureVisualization:
             )
 
 
-            # self.attribution((inputs.pixel_values, inputs.input_embeds), conditions, None, exclude_parallel=False,
+            # self.attribution((inputs.pixel_values, inputs.inputs_embeds), conditions, None, exclude_parallel=False,
             #                 additional_forward_kwargs=additional_forward_kwargs)
 
             if b % checkpoint == checkpoint - 1:
@@ -310,7 +310,7 @@ class QwenFeatureVisualization:
         #            label in self.attribution.model.hf_model.config.label2id] for labels in answers]
 
         inputs.to(self.attribution.model.device)
-        inputs["input_embeds"] = self.attribution.model.get_input_embeddings()(
+        inputs["inputs_embeds"] = self.attribution.model.get_input_embeddings()(
             inputs.input_ids).detach().requires_grad_(True)
         inputs.pixel_values.requires_grad_(True)
 
