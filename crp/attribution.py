@@ -93,6 +93,7 @@ class CondAttribution:
 
       for i, targets in enumerate(target_list):
           # targets are vocab IDs
+          # TODO: check if correct for Qwen
           mask[i, -1, targets] = prediction[i, -1, targets]
 
       return mask
@@ -143,7 +144,8 @@ class CondAttribution:
             if torch.is_tensor(x) and x.requires_grad:
                 x.retain_grad()
 
-        return inputs, conditions, kwargs
+        return inputs, conditions, kwargs#
+
     def _check_arguments(self, inputs, conditions, start_layer, exclude_parallel, init_rel):
 
         if not all(i.requires_grad for i in inputs):
@@ -302,7 +304,6 @@ class CondAttribution:
 
         return distinct_cond
 
-
     def _attribute(
             self, inputs: Union[torch.Tensor, Tuple[torch.Tensor]], conditions: List[Dict[str, List]],
             composite: Composite = None, record_layer: List[str] = [],
@@ -313,8 +314,8 @@ class CondAttribution:
         exclude_parallel: boolean
             If set, all layer names in 'conditions' must be identical. This limitation does not apply to the __call__ method.
         """
-        #print("_attribute")
-        #print(f"record layer: {record_layer}")
+        print("_attribute")
+        print(f"record layer: {record_layer}")
 
         #print(f"inputs type: {type(inputs)}")
 
@@ -396,13 +397,15 @@ class CondAttribution:
 
             torch.manual_seed(self.seed)
             np.random.seed(self.seed)
-            
+
+            print(f'layer input embeds: {additional_forward_kwargs["input_embeds"].shape}')
+
             if start_layer:
                 # TODO: different
                 _ = modified(
-                  inputs_embeds=additional_forward_kwargs["input_embeds"],
+                  inputs_embeds=additional_forward_kwargs["input_embeds"], # if inputs_embeds are not passed, they are computed later based on input_ids
                   pixel_values=inputs[0], # TODO: does it have to be a tuple at all?
-                  image_grid_thw=additional_forward_kwargs["image_grid_thw"],
+                  image_grid_thw=additional_forward_kwargs["image_grid_thw"], # is needed to reconstruct patches per image
                   attention_mask=additional_forward_kwargs["attention_mask"],
                 ).logits
                 pred = layer_out[start_layer]
@@ -419,27 +422,7 @@ class CondAttribution:
                   attention_mask=additional_forward_kwargs["attention_mask"],
                 ).logits
 
-                '''# for test, print outputs
-                # Remove the original prompt tokens
-                inputs_generate = additional_forward_kwargs
-                inputs_generate["pixel_values"] = inputs[0]
-                inputs_generate.pop("input_embeds")
-                print(f"inputs_generate: {inputs_generate.keys()}")
-
-                output_ids = self.model.generate(**inputs_generate, max_new_tokens=20)
-
-                generated_ids_trimmed = [
-                    output_ids[len(input_ids):]
-                    for input_ids, output_ids in zip(inputs_generate["input_ids"], output_ids)
-                ]
-
-                answer = self.processor.batch_decode(
-                    generated_ids_trimmed,
-                    skip_special_tokens=True,
-                    clean_up_tokenization_spaces=False,
-                )
-                print(f"Predicted answer: {answer}")'''
-
+                print(f"pred shape: {pred.shape}")
 
                 grad_mask = self.relevance_init(pred.detach().clone(), y_targets, init_rel)
                 self.backward(pred, grad_mask, exclude_parallel, cond_l_names, layer_out)
@@ -448,10 +431,40 @@ class CondAttribution:
             attribution = self.heatmap_modifier(inputs, on_device)
             activations, relevances = {}, {}
             
-            #print("len out", len(layer_out))
+            print("len out", len(layer_out))
             if len(layer_out) > 0:
                 activations, relevances = self._collect_hook_activation_relevance(layer_out, on_device)
             [h.remove() for h in handles]
+
+            for layer, acts in activations.items():
+                print(f"{layer}: {acts.shape}")
+                print(f"relevance: {relevances[layer].shape}")
+
+                print(f"acts none: {acts.any() is np.nan}")
+                print(f"rel none: {relevances[layer].any() is np.nan}")
+
+            # for test, print outputs
+            # Remove the original prompt tokens
+            inputs_generate = additional_forward_kwargs
+            inputs_generate["pixel_values"] = inputs[0]
+            inputs_generate.pop("input_embeds")
+            print(f"inputs_generate: {inputs_generate.keys()}")
+
+            output_ids = self.model.generate(**inputs_generate, max_new_tokens=20)
+
+            generated_ids_trimmed = [
+                output_ids[len(input_ids):]
+                for input_ids, output_ids in zip(inputs_generate["input_ids"], output_ids)
+            ]
+
+            from transformers import AutoProcessor
+            processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct")
+            answer = processor.batch_decode(
+                generated_ids_trimmed,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
+            )
+            print(f"Predicted answer: {answer}")
 
         #print(f"act: {activations}\nrel: {relevances}\npred: {pred}\n")
         return attrResult(attribution, activations, relevances, pred)

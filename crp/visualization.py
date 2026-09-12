@@ -19,6 +19,17 @@ from crp.helper import load_maximization, load_statistics, load_stat_targets
 from crp.image import vis_img_heatmap, vis_opaque_img
 from crp.cache import Cache
 
+# for class -> id mapping
+class_names = {}
+with open("wordnet_ids_to_classes.txt", encoding="utf-8") as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue  # Skip empty lines
+
+        key, value = line.split(":", 1)  # Split only on the first colon
+        class_names[key.strip()] = value.strip()
+
 
 class QwenFeatureVisualization:
     def __init__(
@@ -42,7 +53,16 @@ class QwenFeatureVisualization:
         self.Cache = cache
 
     def run(self, data_start, data_end, composite: Composite = None, batch_size=32, checkpoint=500, on_device=None):
+        """
 
+        :param data_start: 0 | any other data point
+        :param data_end: len(dataset) | any other data point
+        :param composite: composite for LRP/AttnLRP
+        :param batch_size:
+        :param checkpoint:
+        :param on_device:
+        :return:
+        """
         print("Running Analysis...")
         saved_checkpoints = self.run_distributed(data_start, data_end, composite, batch_size, checkpoint, on_device)
 
@@ -62,7 +82,8 @@ class QwenFeatureVisualization:
         last_checkpoint = 0
 
         n_samples = data_end - data_start
-        samples = np.arange(start=data_start, stop=data_end)
+        # samples: array(int)
+        samples = np.arange(start=data_start, stop=data_end) # Ex.: np.arange(0,3) --> array([0, 1, 2])
 
         if n_samples > batch_size:
             batches = math.ceil(n_samples / batch_size)
@@ -76,15 +97,17 @@ class QwenFeatureVisualization:
         for l_name, concept in self.layer_map.items():
             hook = FeatVisHook(self, concept, l_name, dict_inputs, on_device)
             name_map.append(([l_name], hook))
-        fv_composite = NameMapComposite(name_map)
+        fv_composite = NameMapComposite(name_map)  #  maps module types to LRP rules, so that when this module is encountered, a corresponding hook is registered
 
+        # register 2 types of composites to propagate and collect relevance scores
         if composite:
-            composite.register(self.attribution.model)
-        fv_composite.register(self.attribution.model)
+            composite.register(self.attribution.model)  # replaces gradients with relevance scores
+        fv_composite.register(self.attribution.model)   # stores activation(relevance) scores
 
         pbar = tqdm(total=batches, dynamic_ncols=True)
 
         for b in range(batches):
+            print(f"batch {b}/{batches}")
 
             pbar.update(1)
 
@@ -93,9 +116,9 @@ class QwenFeatureVisualization:
 
             # handle multiple targets (vqa has multiple answers per question)
             target_counts = list(map(len, multi_targets))
-            #print(f"target_counts: {target_counts}")
+            print(f"target_counts: {target_counts}")
 
-            targets = np.array(list(itertools.chain(*multi_targets)))  # flatten 2d list
+            targets = np.array(list(itertools.chain(*multi_targets)))  # flatten 2d list Ex.: chain('ABC', 'DEF') → A B C D E F
             # copy data for every target in target list
 
             target_counts_t = torch.as_tensor(
@@ -105,7 +128,7 @@ class QwenFeatureVisualization:
             )
 
             original_grid = inputs["image_grid_thw"]  # 224 / patch_kernel = 224/14 = 16
-            original_pixels = inputs["pixel_values"]  # shape: (2560, 1176), 1176 = 14*14*2(temporal)*3(channels)
+            original_pixels = inputs["pixel_values"]  # shape: (2560, 1176); 1176 = 14*14*2(temporal)*3(channels)
 
             #print("original pixels", original_pixels.shape)
             # Number of packed visual rows belonging to each image
@@ -116,7 +139,8 @@ class QwenFeatureVisualization:
             E.g. batch with 10 images of size 224x224 will form (224/14)^2 = 16*16 = 256 patches,
             and the input will have shape (2560, n_neurons)
             '''
-            patch_counts = original_grid.prod(dim=1).tolist()  # --> [h_patch*w_patch for im in batch]
+            patch_counts = original_grid.prod(dim=1).tolist()  # --> [h_patch*w_patch for image in batch]
+            print(f"patch_counts: {patch_counts}")
 
             pixel_chunks = torch.split(
                 original_pixels,
@@ -175,7 +199,7 @@ class QwenFeatureVisualization:
 
             # composites are already registered before
             attr = self.attribution(
-                inputs,  # input is a tensor or a tuple of tensors
+                inputs,  # input is a tensor or a tuple of tensors.
                 conditions,
                 composite=composite,
                 record_layer=list(self.layer_map.keys()),
@@ -200,6 +224,11 @@ class QwenFeatureVisualization:
         return self.saved_checkpoints
 
     def get_data_concurrently(self, indices: Union[List, np.ndarray, torch.Tensor]):
+        """
+        Converts images to the input format required for Qwen (BatchFeature objects); extracts targets (ids)
+        :param indices: indices of the dataset images that will be input to the model
+        :return: inputs, targets
+        """
 
         images, questions, answers = zip(*[self.dataset[i] for i in indices])
 
@@ -347,6 +376,8 @@ class QwenFeatureVisualization:
                 additional_forward_kwargs,
             )
         )
+
+        return d_c_sorted, rel_c_sorted, rf_c_sorted, t_c_sorted
 
     @torch.no_grad()
     def analyze_activation(
@@ -647,11 +678,12 @@ class QwenFeatureVisualization:
 
             conditions = [{layer_name: [concept_id]}]
             # initialize relevance with activation before non-linearity (could be changed in a future release)
-            attr = self.attribution((inputs.pixel_values, inputs.input_embeds), conditions, composite,
+            attr = self.attribution(inputs.pixel_values, conditions, composite,
                                     mask_map=self.layer_map[layer_name].mask, start_layer=layer_name,
                                     on_device=self.device, exclude_parallel=False,
-                                    additional_forward_kwargs={"token_type_ids": inputs.token_type_ids,
-                                                               "attention_mask": inputs.attention_mask,
+                                    # TODO: why does it differ from additional kwargs in run_distributed? -> otherwise I receive an error -> Why?
+                                    additional_forward_kwargs={"token_type_ids": inputs.token_type_ids, # distinguishes text and image tokens
+                                                               "attention_mask": inputs.attention_mask, #
                                                                "pixel_mask": inputs.pixel_mask}, rf=rf)
 
             img_heatmaps.extend(attr.heatmap[0].sum(1))
