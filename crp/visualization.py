@@ -91,6 +91,8 @@ class QwenFeatureVisualization:
             batches = 1
             batch_size = n_samples
 
+        print(f"batch size: {batch_size}")
+
         # feature visualization is performed inside forward and backward hook of layers
         name_map, dict_inputs = [], {}
 
@@ -229,6 +231,7 @@ class QwenFeatureVisualization:
         :param indices: indices of the dataset images that will be input to the model
         :return: inputs, targets
         """
+        print(f"indices {indices}")
 
         images, questions, answers = zip(*[self.dataset[i] for i in indices])
 
