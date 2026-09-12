@@ -72,8 +72,6 @@ class FeatVisHook:
     def post_forward(self, module, input, output):
         '''Register a backward-hook to the resulting tensor right after the forward.'''
 
-        print(f"hooks/post_forward. dict_inputs: {self.dict_inputs.keys()}")
-
         s_indices, targets, additional_forward_kwargs = self.dict_inputs["sample_indices"], self.dict_inputs["targets"], self.dict_inputs["additional_forward_kwargs"]
         
         if isinstance(output, tuple):
