@@ -443,29 +443,6 @@ class CondAttribution:
                 print(f"acts none: {acts.any() is np.nan}")
                 print(f"rel none: {relevances[layer].any() is np.nan}")
 
-            # for test, print outputs
-            # Remove the original prompt tokens
-            inputs_generate = additional_forward_kwargs
-            inputs_generate["pixel_values"] = inputs[0]
-            inputs_generate.pop("input_embeds")
-            print(f"inputs_generate: {inputs_generate.keys()}")
-
-            output_ids = self.model.generate(**inputs_generate, max_new_tokens=20)
-
-            generated_ids_trimmed = [
-                output_ids[len(input_ids):]
-                for input_ids, output_ids in zip(inputs_generate["input_ids"], output_ids)
-            ]
-
-            from transformers import AutoProcessor
-            processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct")
-            answer = processor.batch_decode(
-                generated_ids_trimmed,
-                skip_special_tokens=True,
-                clean_up_tokenization_spaces=False,
-            )
-            print(f"Predicted answer: {answer}")
-
         #print(f"act: {activations}\nrel: {relevances}\npred: {pred}\n")
         return attrResult(attribution, activations, relevances, pred)
 
