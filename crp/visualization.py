@@ -116,26 +116,6 @@ class QwenFeatureVisualization:
             sample_indices = samples[b * batch_size: (b + 1) * batch_size]
             inputs, multi_targets = self.get_data_concurrently(sample_indices)
 
-            # Predict on ORIGINAL batch before repeating samples for CRP targets
-            with torch.inference_mode():
-                output_ids = self.attribution.model.generate(
-                    **inputs,
-                    max_new_tokens=20,
-                )
-            
-            generated_ids_trimmed = [
-                out_ids[len(in_ids):]
-                for in_ids, out_ids in zip(inputs["input_ids"], output_ids)
-            ]
-            
-            answers = self.processor.batch_decode(
-                generated_ids_trimmed,
-                skip_special_tokens=True,
-                clean_up_tokenization_spaces=False,
-            )
-
-            print("Predicted answers:", answers)
-
             # handle multiple targets (vqa has multiple answers per question)
             target_counts = list(map(len, multi_targets))
             print(f"target_counts: {target_counts}")
@@ -219,6 +199,36 @@ class QwenFeatureVisualization:
               }
             dict_inputs["additional_forward_kwargs"] = additional_forward_kwargs
 
+
+            for _, hook in name_map:
+              print(
+                  "same dict:",
+                  hook.dict_inputs is dict_inputs,
+                  "keys:",
+                  hook.dict_inputs.keys()
+              )
+
+            # Predict on ORIGINAL batch before repeating samples for CRP targets
+            with torch.inference_mode():
+                output_ids = self.attribution.model.generate(
+                    **inputs,
+                    max_new_tokens=20,
+                )
+            
+            generated_ids_trimmed = [
+                out_ids[len(in_ids):]
+                for in_ids, out_ids in zip(inputs["input_ids"], output_ids)
+            ]
+            
+            answers = self.processor.batch_decode(
+                generated_ids_trimmed,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
+            )
+
+            print("Predicted answers:", answers)
+
+
             # composites are already registered before
             attr = self.attribution(
                 inputs,  # input is a tensor or a tuple of tensors.
@@ -229,7 +239,7 @@ class QwenFeatureVisualization:
             )
 
 
-            # self.attribution((inputs.pixel_values, inputs.inputs_embeds), conditions, None, exclude_parallel=False,
+            # self.attribution((inputs.pixel_values, inputs.input_embeds), conditions, None, exclude_parallel=False,
             #                 additional_forward_kwargs=additional_forward_kwargs)
 
             if b % checkpoint == checkpoint - 1:
