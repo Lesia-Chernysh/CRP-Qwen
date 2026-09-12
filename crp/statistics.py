@@ -101,9 +101,12 @@ class Statistics:
                 p_path = self.PATH / Path(layer_name)
                 p_path.mkdir(parents=True, exist_ok=True)
                
-                np.save(p_path / Path(filename + "data.npy"), self.d_c_sorted[target][layer_name].cpu().numpy())
-                np.save(p_path / Path(filename + "rf.npy"), self.rf_c_sorted[target][layer_name].cpu().numpy())
-                np.save(p_path / Path(filename + "rel.npy"), self.rel_c_sorted[target][layer_name].cpu().numpy())
+                np.save(p_path / Path(filename + "data.npy"), self.d_c_sorted[target][layer_name].to(torch.float32).cpu().numpy())
+                np.save(p_path / Path(filename + "rf.npy"), self.rf_c_sorted[target][layer_name].to(torch.float32).cpu().numpy())
+                np.save(
+                    p_path / Path(filename + "rel.npy"),
+                    self.rel_c_sorted[target][layer_name].to(torch.float32).cpu().numpy()
+                )
 
                 saved_files.append(str(p_path / Path(filename)))
 
