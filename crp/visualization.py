@@ -199,6 +199,14 @@ class QwenFeatureVisualization:
               }
             dict_inputs["additional_forward_kwargs"] = additional_forward_kwargs
 
+            for _, hook in name_map:
+              print(
+                  "same dict:",
+                  hook.dict_inputs is dict_inputs,
+                  "keys:",
+                  hook.dict_inputs.keys()
+              )
+            
             # composites are already registered before
             attr = self.attribution(
                 inputs,  # input is a tensor or a tuple of tensors.
@@ -207,6 +215,16 @@ class QwenFeatureVisualization:
                 record_layer=list(self.layer_map.keys()),
                 additional_forward_kwargs=additional_forward_kwargs,
             )
+
+            print("AFTER attribution:", dict_inputs.keys())
+            for _, hook in name_map:
+              print(
+                  "same dict:",
+                  hook.dict_inputs is dict_inputs,
+                  "keys:",
+                  hook.dict_inputs.keys()
+              )
+
             # self.attribution((inputs.pixel_values, inputs.input_embeds), conditions, None, exclude_parallel=False,
             #                 additional_forward_kwargs=additional_forward_kwargs)
 
