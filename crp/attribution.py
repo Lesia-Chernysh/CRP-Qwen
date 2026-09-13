@@ -402,6 +402,19 @@ class CondAttribution:
 
             if start_layer:
                 # TODO: different
+                print("=== get_max_reference attribution ===")
+                print("inputs[0].shape:", inputs[0].shape)
+                print(
+                    "image_grid_thw:",
+                    additional_forward_kwargs.get("image_grid_thw")
+                )
+                print(
+                    "image_grid_thw shape:",
+                    additional_forward_kwargs.get(
+                        "image_grid_thw", torch.empty(0)
+                    ).shape
+                )
+
                 _ = modified(
                   inputs_embeds=additional_forward_kwargs["inputs_embeds"], # if inputs_embeds are not passed, they are computed later based on input_ids
                   pixel_values=inputs[0], # TODO: does it have to be a tuple at all?
@@ -415,6 +428,18 @@ class CondAttribution:
                 self.backward(pred, grad_mask, exclude_parallel, cond_l_names, layer_out)
 
             else:
+                print("=== get_max_reference attribution ===")
+                print("inputs[0].shape:", inputs[0].shape)
+                print(
+                    "image_grid_thw:",
+                    additional_forward_kwargs.get("image_grid_thw")
+                )
+                print(
+                    "image_grid_thw shape:",
+                    additional_forward_kwargs.get(
+                        "image_grid_thw", torch.empty(0)
+                    ).shape
+                )
                 pred = modified(
                   inputs_embeds=additional_forward_kwargs["inputs_embeds"],
                   pixel_values=inputs[0], # TODO: does it have to be a tuple at all?
