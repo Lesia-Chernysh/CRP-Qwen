@@ -715,6 +715,9 @@ class QwenFeatureVisualization:
                 inputs[key] = input_batch[b * batch_size: (b + 1) * batch_size]
 
             conditions = [{layer_name: [concept_id]}]
+            inputs["inputs_embeds"] = self.attribution.model.get_input_embeddings()(
+            inputs.input_ids).detach().requires_grad_(True)
+
             # initialize relevance with activation before non-linearity (could be changed in a future release)
             attr = self.attribution(inputs.pixel_values, conditions, composite,
                                     mask_map=self.layer_map[layer_name].mask, start_layer=layer_name,
@@ -724,6 +727,7 @@ class QwenFeatureVisualization:
                                       #"token_type_ids": inputs.token_type_ids, # distinguishes text and image tokens
                                       "attention_mask": inputs.attention_mask,
                                       "image_grid_thw": inputs.image_grid_thw,
+                                      "inputs_embeds": inputs.inputs_embeds,
                                       #"pixel_mask": inputs.pixel_mask
                                       }, rf=rf)
 
