@@ -606,6 +606,7 @@ class QwenFeatureVisualization:
             n_indices = rf_c_sorted[r_range[0]:r_range[1], c_id]
 
             print(type(d_indices))
+            print(d_indices)
             print(type(n_indices))
             ref_c[c_id] = self._load_ref_and_attribution(d_indices, c_id, n_indices, layer_name, attribute, rf, plot_fn,
                                                          batch_size)
@@ -719,9 +720,12 @@ class QwenFeatureVisualization:
                                     mask_map=self.layer_map[layer_name].mask, start_layer=layer_name,
                                     on_device=self.device, exclude_parallel=False,
                                     # TODO: why does it differ from additional kwargs in run_distributed? -> otherwise I receive an error -> Why?
-                                    additional_forward_kwargs={"token_type_ids": inputs.token_type_ids, # distinguishes text and image tokens
-                                                               "attention_mask": inputs.attention_mask, #
-                                                               "pixel_mask": inputs.pixel_mask}, rf=rf)
+                                    additional_forward_kwargs={
+                                      #"token_type_ids": inputs.token_type_ids, # distinguishes text and image tokens
+                                      "attention_mask": inputs.attention_mask,
+                                      "image_grid_thw": inputs.image_grid_thw,
+                                      #"pixel_mask": inputs.pixel_mask
+                                      }, rf=rf)
 
             img_heatmaps.extend(attr.heatmap[0].sum(1))
             txt_heatmaps.extend(attr.heatmap[1].sum(-1))
