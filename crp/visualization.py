@@ -605,7 +605,9 @@ class QwenFeatureVisualization:
             d_indices = d_c_sorted[r_range[0]:r_range[1], c_id]
             n_indices = rf_c_sorted[r_range[0]:r_range[1], c_id]
 
-            ref_c[c_id] = self._load_ref_and_attribution(int(d_indices), int(c_id), int(n_indices), layer_name, attribute, rf, plot_fn,
+            print(type(d_indices))
+            print(type(n_indices))
+            ref_c[c_id] = self._load_ref_and_attribution(d_indices, c_id, n_indices, layer_name, attribute, rf, plot_fn,
                                                          batch_size)
 
         return ref_c
