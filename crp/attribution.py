@@ -398,12 +398,12 @@ class CondAttribution:
             torch.manual_seed(self.seed)
             np.random.seed(self.seed)
 
-            print(f'layer input embeds: {additional_forward_kwargs["input_embeds"].shape}')
+            print(f'layer input embeds: {additional_forward_kwargs["inputs_embeds"].shape}')
 
             if start_layer:
                 # TODO: different
                 _ = modified(
-                  inputs_embeds=additional_forward_kwargs["input_embeds"], # if inputs_embeds are not passed, they are computed later based on input_ids
+                  inputs_embeds=additional_forward_kwargs["inputs_embeds"], # if inputs_embeds are not passed, they are computed later based on input_ids
                   pixel_values=inputs[0], # TODO: does it have to be a tuple at all?
                   image_grid_thw=additional_forward_kwargs["image_grid_thw"], # is needed to reconstruct patches per image
                   attention_mask=additional_forward_kwargs["attention_mask"],
@@ -416,7 +416,7 @@ class CondAttribution:
 
             else:
                 pred = modified(
-                  inputs_embeds=additional_forward_kwargs["input_embeds"],
+                  inputs_embeds=additional_forward_kwargs["inputs_embeds"],
                   pixel_values=inputs[0], # TODO: does it have to be a tuple at all?
                   image_grid_thw=additional_forward_kwargs["image_grid_thw"],
                   attention_mask=additional_forward_kwargs["attention_mask"],
