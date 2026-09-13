@@ -4,6 +4,7 @@ import torch
 
 from zennit.core import RemovableHandle, RemovableHandleList
 
+print("new hooks")
 
 class MaskHook:
     '''Mask hooks for adaptive gradient masking or simple modification.'''
@@ -72,6 +73,7 @@ class FeatVisHook:
     def post_forward(self, module, input, output):
         '''Register a backward-hook to the resulting tensor right after the forward.'''
 
+        print(f"hooks/post_forw: {self.dict_inputs.keys()}")
         s_indices, targets, additional_forward_kwargs = self.dict_inputs["sample_indices"], self.dict_inputs["targets"], self.dict_inputs["additional_forward_kwargs"]
         
         if isinstance(output, tuple):
