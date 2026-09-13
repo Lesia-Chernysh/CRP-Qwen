@@ -116,6 +116,27 @@ class QwenFeatureVisualization:
             sample_indices = samples[b * batch_size: (b + 1) * batch_size]
             inputs, multi_targets = self.get_data_concurrently(sample_indices)
 
+            # output predictions
+            '''output_ids = self.attribution.model.generate(
+                    **inputs,
+                    max_new_tokens=20,
+                )
+
+            generated_ids_trimmed = [
+                output_ids_i[len(input_ids_i):]
+                for input_ids_i, output_ids_i
+                in zip(inputs["input_ids"], output_ids)
+            ]
+
+            answers = self.processor.batch_decode(
+                generated_ids_trimmed,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
+            )
+
+            for idx, answer in zip(sample_indices, answers):
+                print(f"{idx}: {answer}")'''
+
             # handle multiple targets (vqa has multiple answers per question)
             target_counts = list(map(len, multi_targets))
             print(f"target_counts: {target_counts}")
@@ -207,27 +228,6 @@ class QwenFeatureVisualization:
                   "keys:",
                   hook.dict_inputs.keys()
               )
-
-            # Predict on ORIGINAL batch before repeating samples for CRP targets
-            '''with torch.inference_mode():
-                output_ids = self.attribution.model.generate(
-                    **inputs,
-                    max_new_tokens=20,
-                )
-            
-            generated_ids_trimmed = [
-                out_ids[len(in_ids):]
-                for in_ids, out_ids in zip(inputs["input_ids"], output_ids)
-            ]
-            
-            answers = self.processor.batch_decode(
-                generated_ids_trimmed,
-                skip_special_tokens=True,
-                clean_up_tokenization_spaces=False,
-            )
-
-            print("Predicted answers:", answers)'''
-
 
             # composites are already registered before
             attr = self.attribution(
