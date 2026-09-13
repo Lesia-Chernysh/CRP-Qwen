@@ -209,7 +209,7 @@ class QwenFeatureVisualization:
               )
 
             # Predict on ORIGINAL batch before repeating samples for CRP targets
-            with torch.inference_mode():
+            '''with torch.inference_mode():
                 output_ids = self.attribution.model.generate(
                     **inputs,
                     max_new_tokens=20,
@@ -226,7 +226,7 @@ class QwenFeatureVisualization:
                 clean_up_tokenization_spaces=False,
             )
 
-            print("Predicted answers:", answers)
+            print("Predicted answers:", answers)'''
 
 
             # composites are already registered before
