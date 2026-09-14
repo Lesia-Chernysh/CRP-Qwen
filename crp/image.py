@@ -496,21 +496,27 @@ def plot_grid(ref_c: Dict[int, Any], cmap_dim=1, cmap="bwr", vmin=None, vmax=Non
                 if sr == cmap_dim:
                     img = imgify(img_list[c], cmap=cmap, vmin=vmin, vmax=vmax, symmetric=symmetric, resize=resize, padding=padding)
                 else:
-                    for cid, items in ref_c.items():
-                        print("concept:", cid)
-                        print("tuple len:", len(items))
+                    for cid, value in ref_c.items():
+                        print("\nconcept:", cid)
                     
-                        for i, item in enumerate(items):
-                            print(f"  item {i}: type={type(item)}")
-                            if hasattr(item, "shape"):
-                                print("   shape:", item.shape)
-                            elif isinstance(item, list):
-                                print("   list len:", len(item))
-                                if len(item) > 0:
-                                    print("   first element type:", type(item[0]))
-                                    if hasattr(item[0], "shape"):
-                                        print("   first element shape:", item[0].shape)
-                                        img = imgify(img_list[c], resize=resize, padding=padding)
+                        inner = value[1]
+                    
+                        print("inner tuple len:", len(inner))
+                    
+                        for i, item in enumerate(inner):
+                            print(
+                                f"  inner[{i}] type={type(item)}, "
+                                f"shape={getattr(item, 'shape', None)}"
+                            )
+                    
+                            if isinstance(item, list):
+                                print("    list len:", len(item))
+                                if len(item):
+                                    print(
+                                        "    first item:",
+                                        type(item[0]),
+                                        getattr(item[0], "shape", None)
+                                    )
 
                 ax.imshow(img)
                 ax.set_xticks([])
