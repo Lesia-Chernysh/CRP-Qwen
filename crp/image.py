@@ -10,6 +10,8 @@ import zennit.image as zimage
 from zennit.image import interval_norm_bounds
 from crp.helper import max_norm
 
+print("NEEW")
+
 def get_crop_range(heatmap, crop_th):
     """
     Returns indices in order to crop the supplied heatmap where relevance is greater than heatmap > crop_th.
@@ -486,10 +488,12 @@ def plot_grid(ref_c: Dict[int, Any], cmap_dim=1, cmap="bwr", vmin=None, vmax=Non
         for sr in range(nsubrows):
 
             if nsubrows > 1:
-                img_list = ref_c[keys[i][1][0]][sr]
+                img_list = ref_c[keys[i]][1][0][sr]
             else:
                 # key[i] is a tuple of a BatchFeature and a tuple with image attr and text attr
-                img_list = ref_c[keys[i][1][0]]
+                img_list = ref_c[keys[i]][1][0]
+
+            print(f"!!!!!!!!!!el of img_list: {img_list[0]}")
             
             for c in range(min(ncols, len(img_list))):
                 ax = plt.Subplot(fig, inner[sr, c])
