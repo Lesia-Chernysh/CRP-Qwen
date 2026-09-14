@@ -403,7 +403,7 @@ class CondAttribution:
             if start_layer:
                 # TODO: different
                 print("=== get_max_reference attribution ===")
-                print("inputs[0].shape:", inputs[0].shape)
+                print("pixel values", inputs[0].shape)
                 print(
                     "image_grid_thw:",
                     additional_forward_kwargs.get("image_grid_thw")
