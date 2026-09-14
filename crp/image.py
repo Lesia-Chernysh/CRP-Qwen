@@ -498,16 +498,19 @@ def plot_grid(ref_c: Dict[int, Any], cmap_dim=1, cmap="bwr", vmin=None, vmax=Non
                 else:
                     for cid, items in ref_c.items():
                         print("concept:", cid)
-                        print("type:", type(items))
-
-                        if hasattr(items, "__len__"):
-                            print("len:", len(items))
-                            if len(items) > 0:
-                                print("first type:", type(items[0]))
-                                if hasattr(items[0], "shape"):
-                                    print("first shape:", items[0].shape)
-
-                    img = imgify(img_list[c], resize=resize, padding=padding)
+                        print("tuple len:", len(items))
+                    
+                        for i, item in enumerate(items):
+                            print(f"  item {i}: type={type(item)}")
+                            if hasattr(item, "shape"):
+                                print("   shape:", item.shape)
+                            elif isinstance(item, list):
+                                print("   list len:", len(item))
+                                if len(item) > 0:
+                                    print("   first element type:", type(item[0]))
+                                    if hasattr(item[0], "shape"):
+                                        print("   first element shape:", item[0].shape)
+                                        img = imgify(img_list[c], resize=resize, padding=padding)
 
                 ax.imshow(img)
                 ax.set_xticks([])
