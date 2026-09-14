@@ -486,9 +486,10 @@ def plot_grid(ref_c: Dict[int, Any], cmap_dim=1, cmap="bwr", vmin=None, vmax=Non
         for sr in range(nsubrows):
 
             if nsubrows > 1:
-                img_list = ref_c[keys[i]][sr]
+                img_list = ref_c[keys[i][1][0]][sr]
             else:
-                img_list = ref_c[keys[i]]
+                # key[i] is a tuple of a BatchFeature and a tuple with image attr and text attr
+                img_list = ref_c[keys[i][1][0]]
             
             for c in range(min(ncols, len(img_list))):
                 ax = plt.Subplot(fig, inner[sr, c])
@@ -496,40 +497,7 @@ def plot_grid(ref_c: Dict[int, Any], cmap_dim=1, cmap="bwr", vmin=None, vmax=Non
                 if sr == cmap_dim:
                     img = imgify(img_list[c], cmap=cmap, vmin=vmin, vmax=vmax, symmetric=symmetric, resize=resize, padding=padding)
                 else:
-                    for cid, value in ref_c.items():
-                        print("\nconcept:", cid)
-                    
-                        inner = value[1]
-                    
-                        print("inner tuple len:", len(inner))
-                    
-                        for i, item in enumerate(inner):
-                            print(
-                                f"  inner[{i}] type={type(item)}, "
-                                f"shape={getattr(item, 'shape', None)}"
-                            )
-                    
-                            if isinstance(item, list):
-                                print("    list len:", len(item))
-                                if len(item):
-                                    print(
-                                        "    first item:",
-                                        type(item[0]),
-                                        getattr(item[0], "shape", None)
-                                    )
-
-                    img_ref_c = {
-                        c_id: value[1][0]
-                        for c_id, value in ref_c.items()
-                    }
-
-                    plot_grid(
-                        img_ref_c,
-                        cmap="bwr",
-                        symmetric=True,
-                        figsize=(6, 5),
-                    )
-                    #img = imgify(img_list[c], resize=resize, padding=padding)
+                    img = imgify(img_list[c], resize=resize, padding=padding)
 
                 ax.imshow(img)
                 ax.set_xticks([])
