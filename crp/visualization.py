@@ -683,10 +683,13 @@ class QwenFeatureVisualization:
     def _load_ref_and_attribution(self, d_indices, c_id, n_indices, layer_name, attribute, rf, plot_fn, batch_size):
 
         inputs, _ = self.get_data_concurrently(d_indices)
+        print("_load_ref_and_attribution")
+        print(f"inputs: {type(inputs)}")
 
         if attribute:
             heatmaps = self._attribution_on_reference(inputs, c_id, layer_name, None, rf, n_indices, batch_size)
 
+            print(f"heatmaps shape: {heatmaps[0]}")
             if callable(plot_fn):
                 return plot_fn(inputs.pixel_values, heatmaps[0], rf)
             else:
@@ -697,6 +700,8 @@ class QwenFeatureVisualization:
 
     def _attribution_on_reference(self, inputs, concept_id: int, layer_name: str, composite, rf=False,
                                   neuron_ids: list = [], batch_size=32):
+
+        print("_attribution_on_reference")
 
         n_samples = len(inputs.input_ids)
         if n_samples > batch_size:
@@ -727,10 +732,10 @@ class QwenFeatureVisualization:
                                       #"token_type_ids": inputs.token_type_ids, # distinguishes text and image tokens
                                       "attention_mask": inputs.attention_mask,
                                       "image_grid_thw": inputs.image_grid_thw,
-                                      "inputs_embeds": inputs.inputs_embeds,
-                                      #"pixel_mask": inputs.pixel_mask
+                                      "inputs_embeds": inputs.inputs_embeds
                                       }, rf=rf)
 
+            print(f"attr.heatmap: {attr.heatmap.shape}")
             img_heatmaps.extend(attr.heatmap[0].sum(1))
             txt_heatmaps.extend(attr.heatmap[1].sum(-1))
 
