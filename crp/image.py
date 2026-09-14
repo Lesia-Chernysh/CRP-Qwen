@@ -488,8 +488,10 @@ def plot_grid(ref_c: Dict[int, Any], cmap_dim=1, cmap="bwr", vmin=None, vmax=Non
         for sr in range(nsubrows):
 
             if nsubrows > 1:
+                print(ref_c[keys[i]])
                 img_list = ref_c[keys[i]][1][0][sr]
             else:
+                print(ref_c[keys[i]])
                 # key[i] is a tuple of a BatchFeature and a tuple with image attr and text attr
                 img_list = ref_c[keys[i]][1][0]
 
