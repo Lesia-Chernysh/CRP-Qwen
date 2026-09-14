@@ -496,6 +496,17 @@ def plot_grid(ref_c: Dict[int, Any], cmap_dim=1, cmap="bwr", vmin=None, vmax=Non
                 if sr == cmap_dim:
                     img = imgify(img_list[c], cmap=cmap, vmin=vmin, vmax=vmax, symmetric=symmetric, resize=resize, padding=padding)
                 else:
+                    for cid, items in ref_c.items():
+                        print("concept:", cid)
+                        print("type:", type(items))
+
+                        if hasattr(items, "__len__"):
+                            print("len:", len(items))
+                            if len(items) > 0:
+                                print("first type:", type(items[0]))
+                                if hasattr(items[0], "shape"):
+                                    print("first shape:", items[0].shape)
+
                     img = imgify(img_list[c], resize=resize, padding=padding)
 
                 ax.imshow(img)
