@@ -700,52 +700,150 @@ class QwenFeatureVisualization:
         else:
             return inputs
 
-    def _attribution_on_reference(self, inputs, concept_id: int, layer_name: str, composite, rf=False,
-                                  neuron_ids: list = [], batch_size=32):
+    def _attribution_on_reference(
+      self,
+      inputs,
+      concept_id: int,
+      layer_name: str,
+      composite,
+      rf=False,
+      neuron_ids=[],
+      batch_size=32,
+  ):
 
-        print("_attribution_on_reference")
-        print(f"inputs.pixel_values: {inputs.pixel_values.shape}")
+      print("new _attribution_on_reference")
+      print("inputs.pixel_values:", inputs.pixel_values.shape)
 
-        n_samples = len(inputs.input_ids)
-        if n_samples > batch_size:
-            batches = math.ceil(n_samples / batch_size)
-        else:
-            batches = 1
-            batch_size = n_samples
+      n_samples = len(inputs.input_ids)
 
-        if rf and (len(neuron_ids) != n_samples):
-            raise ValueError("length of 'neuron_ids' must be equal to the length of 'inputs'")
+      if n_samples > batch_size:
+          batches = math.ceil(n_samples / batch_size)
+      else:
+          batches = 1
+          batch_size = n_samples
 
-        print(f"batches: {batches}")
-        img_heatmaps = []
-        txt_heatmaps = []
-        for b in range(batches):
-            for key, input_batch in inputs.items():
-                inputs[key] = input_batch[b * batch_size: (b + 1) * batch_size]
+      if rf and len(neuron_ids) != n_samples:
+          raise ValueError(
+              "length of 'neuron_ids' must be equal "
+              "to the length of 'inputs'"
+          )
 
-            conditions = [{layer_name: [concept_id]}]
-            inputs["inputs_embeds"] = self.attribution.model.get_input_embeddings()(
-            inputs.input_ids).detach().requires_grad_(True)
-            print(f"pixel_values right before attrib: {inputs.pixel_values.shape}")
-            print("changed input to attribution to tuple")
+      # Number of raw Qwen vision patches per image
+      patch_counts = inputs.image_grid_thw.prod(dim=1)
 
-            # initialize relevance with activation before non-linearity (could be changed in a future release)
-            attr = self.attribution((inputs.pixel_values, ), conditions, composite,
-                                    mask_map=self.layer_map[layer_name].mask, start_layer=layer_name,
-                                    on_device=self.device, exclude_parallel=False,
-                                    # TODO: why does it differ from additional kwargs in run_distributed? -> otherwise I receive an error -> Why?
-                                    additional_forward_kwargs={
-                                      #"token_type_ids": inputs.token_type_ids, # distinguishes text and image tokens
-                                      "attention_mask": inputs.attention_mask,
-                                      "image_grid_thw": inputs.image_grid_thw,
-                                      "inputs_embeds": inputs.inputs_embeds
-                                      }, rf=rf)
+      # [0, patches_img0, patches_img0+patches_img1, ...]
+      patch_offsets = torch.cat([
+          torch.zeros(
+              1,
+              device=patch_counts.device,
+              dtype=patch_counts.dtype,
+          ),
+          patch_counts.cumsum(dim=0),
+      ])
 
-            print(f"attr.heatmap: {attr.heatmap.shape}")
-            img_heatmaps.extend(attr.heatmap[0].sum(1))
-            txt_heatmaps.extend(attr.heatmap[1].sum(-1))
+      img_heatmaps = []
+      txt_heatmaps = []
 
-        return (img_heatmaps, txt_heatmaps)
+      for b in range(batches):
+
+          sample_start = b * batch_size
+          sample_end = min(
+              (b + 1) * batch_size,
+              n_samples,
+          )
+
+          # -----------------------------
+          # Slice text/sample-level data
+          # -----------------------------
+
+          input_ids = inputs.input_ids[
+              sample_start:sample_end
+          ]
+
+          attention_mask = inputs.attention_mask[
+              sample_start:sample_end
+          ]
+
+          image_grid_thw = inputs.image_grid_thw[
+              sample_start:sample_end
+          ]
+
+          # -----------------------------
+          # Slice PATCH-level image data
+          # -----------------------------
+
+          patch_start = int(
+              patch_offsets[sample_start].item()
+          )
+
+          patch_end = int(
+              patch_offsets[sample_end].item()
+          )
+
+          pixel_values = inputs.pixel_values[
+              patch_start:patch_end
+          ]
+
+          print(
+              "pixel_values before attrib:",
+              pixel_values.shape,
+          )
+
+          print(
+              "grid:",
+              image_grid_thw,
+          )
+
+          # Very useful sanity check
+          expected_patches = (
+              image_grid_thw
+              .prod(dim=1)
+              .sum()
+              .item()
+          )
+
+          assert pixel_values.shape[0] == expected_patches, (
+              f"Expected {expected_patches} patches, "
+              f"got {pixel_values.shape[0]}"
+          )
+
+          # -----------------------------
+          # Text embeddings
+          # -----------------------------
+
+          inputs_embeds = (
+              self.attribution.model
+              .get_input_embeddings()(input_ids)
+              .detach()
+              .requires_grad_(True)
+          )
+
+          conditions = [
+              {layer_name: [concept_id]}
+          ]
+
+          attr = self.attribution(
+              (pixel_values,),
+              conditions,
+              composite,
+              mask_map=self.layer_map[layer_name].mask,
+              start_layer=layer_name,
+              on_device=self.device,
+              exclude_parallel=False,
+              additional_forward_kwargs={
+                  "attention_mask": attention_mask,
+                  "image_grid_thw": image_grid_thw,
+                  "inputs_embeds": inputs_embeds,
+              },
+              rf=rf,
+          )
+
+      print(f"attr.heatmap: {attr.heatmap.shape}")
+      img_heatmaps.extend(attr.heatmap[0].sum(1))
+      txt_heatmaps.extend(attr.heatmap[1].sum(-1))
+
+      return (img_heatmaps, txt_heatmaps)
+
 
     def compute_stats(self, concept_id, layer_name: str, mode="relevance", top_N=5, mean_N=10, norm=False) -> Tuple[
         list, list]:
