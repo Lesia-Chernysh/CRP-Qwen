@@ -263,6 +263,7 @@ class QwenFeatureVisualization:
         :param indices: indices of the dataset images that will be input to the model
         :return: inputs, targets
         """
+        print(f"get data concurrently")
         print(f"indices {indices}")
 
         images, questions, answers = zip(*[self.dataset[int(i)] for i in indices])
@@ -305,6 +306,7 @@ class QwenFeatureVisualization:
 
         # 'transformers.feature_extraction_utils.BatchFeature' is a dict-like object with such keys:
         # 'input_ids', 'attention_mask', 'pixel_values', 'image_grid_thw'
+        print(f"inputs.pixel_values: {inputs.pixel_values.shape}")
 
         label2id = {
             class_names[class_id]: idx
@@ -702,6 +704,7 @@ class QwenFeatureVisualization:
                                   neuron_ids: list = [], batch_size=32):
 
         print("_attribution_on_reference")
+        print(f"inputs.pixel_values: {inputs.pixel_values.shape}")
 
         n_samples = len(inputs.input_ids)
         if n_samples > batch_size:
