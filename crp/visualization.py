@@ -685,6 +685,7 @@ class QwenFeatureVisualization:
         inputs, _ = self.get_data_concurrently(d_indices)
         print("_load_ref_and_attribution")
         print(f"inputs: {type(inputs)}")
+        print(f"inputs: {inputs}")
 
         if attribute:
             heatmaps = self._attribution_on_reference(inputs, c_id, layer_name, None, rf, n_indices, batch_size)
