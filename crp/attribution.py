@@ -85,11 +85,14 @@ class CondAttribution:
 
     def relevance_init(self, prediction, target_list, init_rel=None):
       # prediction: [B, S, V]
+      print("relevance_init")
 
       if init_rel is not None:
           return init_rel(prediction)
 
       mask = torch.zeros_like(prediction)
+
+      print(f"mask: {mask.shape}")
 
       for i, targets in enumerate(target_list):
           # targets are vocab IDs
@@ -422,7 +425,7 @@ class CondAttribution:
                   attention_mask=additional_forward_kwargs["attention_mask"],
                 ).logits
                 pred = layer_out[start_layer]
-                grad_mask = self.relevance_init(pred.detach().clone(), None, init_rel)
+                grad_mask = self.relevance_init(pred.detach().clone(), y_targets, init_rel)
                 if start_layer in cond_l_names:
                     cond_l_names.remove(start_layer)
                 self.backward(pred, grad_mask, exclude_parallel, cond_l_names, layer_out)
