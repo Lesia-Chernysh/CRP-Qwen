@@ -439,80 +439,241 @@ def img_txt_grid(
     return grid_img
 
 
-def plot_grid(ref_c: Dict[int, Any], cmap_dim=1, cmap="bwr", vmin=None, vmax=None, symmetric=True, resize=None, padding=True, figsize=(6, 6)):
+from typing import Dict, Any
+from collections.abc import Iterable
+import numpy as np
+import torch
+import matplotlib.pyplot as plt
+from matplotlib import gridspec
+
+
+def plot_grid(
+    ref_c: Dict[int, Any],
+    cmap_dim=0,
+    cmap="bwr",
+    vmin=None,
+    vmax=None,
+    symmetric=True,
+    resize=None,
+    padding=True,
+    figsize=(6, 6),
+):
     """
-    Plots dictionary of reference images as they are returned of the 'get_max_reference' method. To every element in the list crp.imgify is applied with its respective argument values.
+    Plot reference heatmaps returned by the modified Qwen
+    `get_max_reference()` pipeline.
 
-    Parameters:
-    ----------
-    ref_c: dict with keys: integer and value: several lists filled with torch.Tensor, np.ndarray or PIL Image
-        To every element in the list crp.imgify is applied.
-    resize: None or int
-        If None, no resizing is applied. If int, sets the maximal aspect ratio of the image.
-    padding: boolean
-        If True, pads the image into a square shape by setting the alpha channel to zero outside the image.
-    figsize: tuple or None
-        Size of plt.figure
-    cmap_dim: int, 0 or 1 
-        Applies the remaining parameters to the first or second element of the tuple list, i.e. plot as heatmap
+    Expected Qwen structure
+    -----------------------
+    ref_c[concept_id] = (
+        BatchFeature,
+        (
+            img_heatmaps,
+            txt_heatmaps,
+        )
+    )
 
-    REMAINING PARAMETERS: correspond to zennit.imgify
+    where `img_heatmaps` should be something like:
 
-    Returns:
-    --------
-    shows matplotlib.pyplot plot
+        [
+            Tensor[H, W],
+            Tensor[H, W],
+            ...
+        ]
+
+    For the current Qwen vision setup this will typically be:
+
+        Tensor[16, 16]
+
+    per reference image.
+
+    The function also attempts to support the original CRP representation.
     """
+
+    if not isinstance(ref_c, dict) or len(ref_c) == 0:
+        raise ValueError("'ref_c' must be a non-empty dictionary.")
 
     keys = list(ref_c.keys())
+
+    # ------------------------------------------------------------
+    # Normalize ref_c into:
+    #
+    # plot_data[concept_id] = [image_0, image_1, ...]
+    #
+    # i.e. remove the Qwen BatchFeature / text-attribution wrapper.
+    # ------------------------------------------------------------
+    plot_data = {}
+
+    for concept_id in keys:
+
+        value = ref_c[concept_id]
+
+        # --------------------------------------------------------
+        # Qwen structure:
+        #
+        # (
+        #     BatchFeature,
+        #     (
+        #         img_heatmaps,
+        #         txt_heatmaps
+        #     )
+        # )
+        # --------------------------------------------------------
+        if (
+            isinstance(value, tuple)
+            and len(value) == 2
+            and hasattr(value[0], "data")  # BatchFeature-like
+            and isinstance(value[1], tuple)
+        ):
+            attribution_result = value[1]
+
+            if len(attribution_result) < 1:
+                raise ValueError(
+                    f"Concept {concept_id}: attribution tuple is empty."
+                )
+
+            img_heatmaps = attribution_result[0]
+
+            # Normalize a stacked tensor:
+            # [N, H, W] -> list of [H, W]
+            if torch.is_tensor(img_heatmaps):
+
+                if img_heatmaps.ndim == 2:
+                    img_heatmaps = [img_heatmaps]
+
+                elif img_heatmaps.ndim >= 3:
+                    img_heatmaps = [
+                        img_heatmaps[j]
+                        for j in range(img_heatmaps.shape[0])
+                    ]
+
+                elif img_heatmaps.ndim == 1:
+                    raise ValueError(
+                        f"Concept {concept_id}: image heatmap has shape "
+                        f"{tuple(img_heatmaps.shape)}. Expected [H,W] "
+                        f"or [N,H,W]."
+                    )
+
+                else:
+                    raise ValueError(
+                        f"Concept {concept_id}: got a scalar heatmap."
+                    )
+
+            elif isinstance(img_heatmaps, tuple):
+                img_heatmaps = list(img_heatmaps)
+
+            elif not isinstance(img_heatmaps, list):
+                img_heatmaps = [img_heatmaps]
+
+            plot_data[concept_id] = img_heatmaps
+
+        # --------------------------------------------------------
+        # Ordinary list / tuple of images or heatmaps.
+        # --------------------------------------------------------
+        elif isinstance(value, (list, tuple)):
+
+            plot_data[concept_id] = list(value)
+
+        else:
+            plot_data[concept_id] = [value]
+
+    # ------------------------------------------------------------
+    # Validate extracted heatmaps.
+    # ------------------------------------------------------------
+    for concept_id, img_list in plot_data.items():
+
+        if len(img_list) == 0:
+            raise ValueError(
+                f"Concept {concept_id} contains no image heatmaps."
+            )
+
+        for j, img in enumerate(img_list):
+
+            if torch.is_tensor(img):
+
+                if img.ndim == 0:
+                    raise ValueError(
+                        f"Concept {concept_id}, reference {j}: "
+                        "got a 0-dimensional tensor. "
+                        "Check that `_attribution_on_reference()` uses "
+                        "`append(hm)` rather than `extend(hm)`."
+                    )
+
+                # imgify generally works better with CPU tensors
+                img_list[j] = img.detach().float().cpu()
+
+            elif isinstance(img, np.ndarray):
+
+                if img.ndim == 0:
+                    raise ValueError(
+                        f"Concept {concept_id}, reference {j}: "
+                        "got a scalar NumPy array."
+                    )
+
+    # ------------------------------------------------------------
+    # Determine grid dimensions.
+    #
+    # One row per concept.
+    # One column per reference heatmap.
+    # ------------------------------------------------------------
     nrows = len(keys)
-    value = next(iter(ref_c.values()))
 
-    if cmap_dim > 2 or cmap_dim < 1 or cmap_dim == None:
-        raise ValueError("'cmap_dim' must be 0 or 1 or None.")
-
-    if isinstance(value, Tuple) and isinstance(value[0], Iterable):
-        nsubrows = len(value)
-        ncols = len(value[0])
-    elif isinstance(value, Iterable):
-        nsubrows = 1
-        ncols = len(value)
-    else:
-        raise ValueError("'ref_c' dictionary must contain an iterable of torch.Tensor, np.ndarray or PIL Image or a tuple of thereof.")
+    ncols = max(
+        len(plot_data[concept_id])
+        for concept_id in keys
+    )
 
     fig = plt.figure(figsize=figsize)
-    outer = gridspec.GridSpec(nrows, 1, wspace=0, hspace=0.2)
 
-    for i in range(nrows):
-        inner = gridspec.GridSpecFromSubplotSpec(nsubrows, ncols, subplot_spec=outer[i], wspace=0, hspace=0.1)
+    outer = gridspec.GridSpec(
+        nrows,
+        1,
+        wspace=0,
+        hspace=0.2,
+    )
 
-        for sr in range(nsubrows):
+    # ------------------------------------------------------------
+    # Plot
+    # ------------------------------------------------------------
+    for row_idx, concept_id in enumerate(keys):
 
-            if nsubrows > 1:
-                print(ref_c[keys[i]])
-                img_list = ref_c[keys[i]][1][0][sr]
-            else:
-                print(ref_c[keys[i]])
-                # key[i] is a tuple of a BatchFeature and a tuple with image attr and text attr
-                img_list = ref_c[keys[i]][1][0]
+        img_list = plot_data[concept_id]
 
-            print(f"!!!!!!!!!!el of img_list: {img_list[0]}")
-            
-            for c in range(min(ncols, len(img_list))):
-                ax = plt.Subplot(fig, inner[sr, c])
+        inner = gridspec.GridSpecFromSubplotSpec(
+            1,
+            ncols,
+            subplot_spec=outer[row_idx],
+            wspace=0,
+            hspace=0,
+        )
 
-                if sr == cmap_dim:
-                    img = imgify(img_list[c], cmap=cmap, vmin=vmin, vmax=vmax, symmetric=symmetric, resize=resize, padding=padding)
-                else:
-                    img = imgify(img_list[c], resize=resize, padding=padding)
+        for col_idx, heatmap in enumerate(img_list):
 
-                ax.imshow(img)
-                ax.set_xticks([])
-                ax.set_yticks([])
+            ax = fig.add_subplot(inner[0, col_idx])
 
-                if sr == 0 and c == 0:
-                    ax.set_ylabel(keys[i])
+            # We are plotting image relevance maps here, so always
+            # use the relevance colormap.
+            img = imgify(
+                heatmap,
+                cmap=cmap,
+                vmin=vmin,
+                vmax=vmax,
+                symmetric=symmetric,
+                resize=resize,
+                padding=padding,
+            )
 
-                fig.add_subplot(ax)
-                
-    outer.tight_layout(fig)  
-    fig.show()
+            ax.imshow(img)
+
+            ax.set_xticks([])
+            ax.set_yticks([])
+
+            if col_idx == 0:
+                ax.set_ylabel(
+                    str(concept_id),
+                    rotation=90,
+                    va="center",
+                )
+
+    plt.tight_layout()
+
+    return fig
