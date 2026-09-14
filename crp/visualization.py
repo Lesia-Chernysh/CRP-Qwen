@@ -865,7 +865,7 @@ class QwenFeatureVisualization:
           # For images t should normally be 1
           hm = hm.sum(dim=0)
 
-          img_heatmaps.append(hm)
+          img_heatmaps.append(hm.detach().cpu())
 
       print(f"attr.heatmap len: {len(attr.heatmap)}")
       try:
