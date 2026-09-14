@@ -518,8 +518,8 @@ def plot_grid(ref_c: Dict[int, Any], cmap_dim=1, cmap="bwr", vmin=None, vmax=Non
                                         getattr(item[0], "shape", None)
                                     )
 
-                      img = imgify(img_list[c], resize=resize, padding=padding)
-                  
+                    img = imgify(img_list[c], resize=resize, padding=padding)
+
                 ax.imshow(img)
                 ax.set_xticks([])
                 ax.set_yticks([])
