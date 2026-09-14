@@ -838,7 +838,9 @@ class QwenFeatureVisualization:
               rf=rf,
           )
 
-      print(f"attr.heatmap: {attr.heatmap.shape}")
+      print(f"attr.heatmap len: {len(attr.heatmap)}")
+      print(f"attr.heatmap[0]: {attr.heatmap[0].shape}")
+      print(f"attr.heatmap[1]: {attr.heatmap[1].shape}")
       img_heatmaps.extend(attr.heatmap[0].sum(1))
       txt_heatmaps.extend(attr.heatmap[1].sum(-1))
 
