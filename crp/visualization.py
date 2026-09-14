@@ -716,6 +716,7 @@ class QwenFeatureVisualization:
         if rf and (len(neuron_ids) != n_samples):
             raise ValueError("length of 'neuron_ids' must be equal to the length of 'inputs'")
 
+        print(f"batches: {batches}")
         img_heatmaps = []
         txt_heatmaps = []
         for b in range(batches):
@@ -725,9 +726,11 @@ class QwenFeatureVisualization:
             conditions = [{layer_name: [concept_id]}]
             inputs["inputs_embeds"] = self.attribution.model.get_input_embeddings()(
             inputs.input_ids).detach().requires_grad_(True)
+            print(f"pixel_values right before attrib: {inputs.pixel_values.shape}")
+            print("changed input to attribution to tuple")
 
             # initialize relevance with activation before non-linearity (could be changed in a future release)
-            attr = self.attribution(inputs.pixel_values, conditions, composite,
+            attr = self.attribution((inputs.pixel_values, ), conditions, composite,
                                     mask_map=self.layer_map[layer_name].mask, start_layer=layer_name,
                                     on_device=self.device, exclude_parallel=False,
                                     # TODO: why does it differ from additional kwargs in run_distributed? -> otherwise I receive an error -> Why?
