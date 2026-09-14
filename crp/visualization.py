@@ -838,12 +838,42 @@ class QwenFeatureVisualization:
               rf=rf,
           )
 
-      print(f"attr.heatmap len: {len(attr.heatmap)}")
-      print(f"attr.heatmap[0]: {attr.heatmap[0].shape}")
-      print(f"attr.heatmap[1]: {attr.heatmap[1].shape}")
-      img_heatmaps.extend(attr.heatmap[0].sum(1))
-      txt_heatmaps.extend(attr.heatmap[1].sum(-1))
+      
+      img_heatmap = attr.heatmap[0]
 
+      print("raw image heatmap:", img_heatmap.shape)
+      # [512, 1176]
+
+      # Collapse flattened patch features
+      patch_relevance = img_heatmap.sum(dim=1)
+      # [512]
+
+      patch_counts = image_grid_thw.prod(dim=1).tolist()
+      # [256, 256]
+
+      per_image = torch.split(
+          patch_relevance,
+          patch_counts,
+      )
+
+      for hm, grid in zip(per_image, image_grid_thw):
+
+          t, h, w = map(int, grid.tolist())
+
+          hm = hm.reshape(t, h, w)
+
+          # For images t should normally be 1
+          hm = hm.sum(dim=0)
+
+          img_heatmaps.append(hm)
+
+      print(f"attr.heatmap len: {len(attr.heatmap)}")
+      try:
+        print(f"attr.heatmap[1]: {attr.heatmap[1].shape}")
+        txt_heatmaps.extend(attr.heatmap[1].sum(-1))
+      except IndexError:
+        pass
+      
       return (img_heatmaps, txt_heatmaps)
 
 
