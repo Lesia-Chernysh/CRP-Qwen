@@ -4,6 +4,40 @@ from typing import List, Dict
 from sklearn.decomposition import FastICA
 
 
+def qwen_visual_token_counts(tensor_length, additional_forward_kwargs):
+    """Return per-image token counts for a packed Qwen vision tensor.
+
+    Qwen uses ``prod(image_grid_thw)`` rows before spatial merging and
+    ``prod(image_grid_thw) / spatial_merge_size**2`` rows afterwards.  We
+    accept only a count that exactly describes the hooked tensor; language
+    model tensors containing text and image tokens are intentionally rejected.
+    """
+    if not additional_forward_kwargs or "image_grid_thw" not in additional_forward_kwargs:
+        raise ValueError("image_grid_thw is required for packed Qwen vision tensors")
+
+    grid = additional_forward_kwargs["image_grid_thw"]
+    raw = grid.prod(dim=1).long()
+    candidates = [raw]
+
+    merge_size = int(additional_forward_kwargs.get("spatial_merge_size", 1))
+    if merge_size > 1:
+        divisor = merge_size ** 2
+        if torch.any(raw % divisor):
+            raise ValueError("image_grid_thw is not divisible by spatial_merge_size**2")
+        candidates.append(raw // divisor)
+
+    for counts in candidates:
+        if int(counts.sum().item()) == int(tensor_length):
+            return counts
+
+    expected = [int(counts.sum().item()) for counts in candidates]
+    raise ValueError(
+        f"Cannot align a tensor with {tensor_length} rows to Qwen visual tokens; "
+        f"expected one of {expected}. Hook a vision-only layer, or provide the "
+        "correct spatial_merge_size."
+    )
+
+
 class Concept:
     """
     Abstract class that imlplements the core functionality for the attribution computation of concepts.
@@ -183,9 +217,7 @@ class TransformerChannelConcept(Concept):
     ):
 
         def get_image_slice(grad):
-            grid = additional_forward_kwargs["image_grid_thw"]
-
-            token_counts = grid.prod(dim=1).long()
+            token_counts = qwen_visual_token_counts(grad.shape[0], additional_forward_kwargs)
             starts = torch.cat([
                 torch.zeros(1, device=token_counts.device, dtype=torch.long),
                 token_counts.cumsum(0)[:-1],
@@ -250,9 +282,7 @@ class TransformerChannelConcept(Concept):
         def mask_fct(grad):
             #print("grad shape:", grad.shape)
 
-            grid = additional_forward_kwargs["image_grid_thw"]
-
-            token_counts = grid.prod(dim=1).long()
+            token_counts = qwen_visual_token_counts(grad.shape[0], additional_forward_kwargs)
 
             start = int(
                 token_counts[:batch_id].sum().item()
@@ -288,10 +318,9 @@ class TransformerChannelConcept(Concept):
 
         #print("raw relevance shape:", relevance.shape)
 
-        grid = additional_forward_kwargs["image_grid_thw"]
-        token_counts = grid.prod(dim=1).tolist()
-
-        assert sum(token_counts) == relevance.shape[0]
+        token_counts = qwen_visual_token_counts(
+            relevance.shape[0], additional_forward_kwargs
+        ).tolist()
 
         chunks = torch.split(
             relevance,
@@ -348,16 +377,25 @@ class TransformerChannelConcept(Concept):
                 )
 
         elif x.ndim == 2:
-            # VLMLP:
-            # [batch, channels]
-
-            rel_l = x
-
-            # No spatial / receptive-field neuron axis exists here.
-            rf_neuron = torch.zeros_like(
-                rel_l,
-                dtype=torch.long,
-            )
+            grid = (additional_forward_kwargs or {}).get("image_grid_thw")
+            if grid is not None and x.shape[0] != grid.shape[0]:
+                token_counts = qwen_visual_token_counts(
+                    x.shape[0], additional_forward_kwargs
+                ).tolist()
+                chunks = torch.split(x, token_counts, dim=0)
+                rf_neuron = torch.stack(
+                    [torch.argmax(chunk, dim=0) for chunk in chunks], dim=0
+                )
+                if max_target == "sum":
+                    rel_l = torch.stack([chunk.sum(dim=0) for chunk in chunks], dim=0)
+                elif max_target == "max":
+                    rel_l = torch.stack([chunk.amax(dim=0) for chunk in chunks], dim=0)
+                else:
+                    raise ValueError("'max_target' supports only 'max' or 'sum'.")
+            else:
+                # Already aggregated [batch, channels]; no RF axis remains.
+                rel_l = x
+                rf_neuron = torch.zeros_like(rel_l, dtype=torch.long)
 
         else:
             raise ValueError(
