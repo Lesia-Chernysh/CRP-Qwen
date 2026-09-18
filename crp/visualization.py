@@ -12,24 +12,12 @@ from tqdm import tqdm
 from zennit.composites import NameMapComposite, Composite
 from crp.attribution import CondAttribution
 from crp.maximization import Maximization
-from crp.concepts import Concept
+from crp.concepts import Concept, qwen_visual_token_counts
 from crp.statistics import Statistics
 from crp.hooks import FeatVisHook
 from crp.helper import load_maximization, load_statistics, load_stat_targets
 from crp.image import vis_img_heatmap, vis_opaque_img
 from crp.cache import Cache
-
-# for class -> id mapping
-class_names = {}
-with open("wordnet_ids_to_classes.txt", encoding="utf-8") as f:
-    for line in f:
-        line = line.strip()
-        if not line:
-            continue  # Skip empty lines
-
-        key, value = line.split(":", 1)  # Split only on the first colon
-        class_names[key.strip()] = value.strip()
-
 
 class QwenFeatureVisualization:
     def __init__(
@@ -82,6 +70,10 @@ class QwenFeatureVisualization:
         last_checkpoint = 0
 
         n_samples = data_end - data_start
+        if n_samples <= 0:
+            raise ValueError("data_end must be greater than data_start")
+        if batch_size <= 0 or checkpoint <= 0:
+            raise ValueError("batch_size and checkpoint must be positive")
         # samples: array(int)
         samples = np.arange(start=data_start, stop=data_end) # Ex.: np.arange(0,3) --> array([0, 1, 2])
 
@@ -216,7 +208,8 @@ class QwenFeatureVisualization:
             dict_inputs["targets"] = targets
             additional_forward_kwargs = {
               "attention_mask": inputs.attention_mask,
-              "image_grid_thw": inputs.image_grid_thw
+              "image_grid_thw": inputs.image_grid_thw,
+              "spatial_merge_size": self._spatial_merge_size(),
               }
             dict_inputs["additional_forward_kwargs"] = additional_forward_kwargs
 
@@ -308,25 +301,37 @@ class QwenFeatureVisualization:
         # 'input_ids', 'attention_mask', 'pixel_values', 'image_grid_thw'
         print(f"inputs.pixel_values: {inputs.pixel_values.shape}")
 
-        label2id = {
-            class_names[class_id]: idx
-            for idx, class_id in enumerate(self.dataset.classes)
-            if class_id in class_names
-        }
-        targets = [
-            [label2id[label]]
-            for label in answers
-            if label in label2id
-        ]
-        # targets = [[self.attribution.model.hf_model.config.label2id[label] for label in labels if
-        #            label in self.attribution.model.hf_model.config.label2id] for labels in answers]
+        # CRP initializes relevance in the model's vocabulary dimension.  A
+        # dataset class index is therefore invalid here.  Attribute the first
+        # token Qwen is expected to generate for each answer.  Explaining later
+        # answer tokens requires separate autoregressive forwards with their
+        # preceding answer tokens in the prompt.
+        targets = [[self._first_answer_token_id(answer)] for answer in answers]
 
         inputs.to(self.attribution.model.device)
         inputs["inputs_embeds"] = self.attribution.model.get_input_embeddings()(
             inputs.input_ids).detach().requires_grad_(True)
+        inputs["spatial_merge_size"] = self._spatial_merge_size()
         inputs.pixel_values.requires_grad_(True)
 
         return inputs, targets
+
+    def _first_answer_token_id(self, answer):
+        tokenizer = getattr(self.processor, "tokenizer", self.processor)
+        if tokenizer is None:
+            raise ValueError("A Qwen processor/tokenizer is required to encode targets")
+        encoded = tokenizer(str(answer), add_special_tokens=False)
+        token_ids = encoded["input_ids"] if isinstance(encoded, dict) else encoded.input_ids
+        if token_ids and isinstance(token_ids[0], list):
+            token_ids = token_ids[0]
+        if not token_ids:
+            raise ValueError(f"Answer {answer!r} does not produce a tokenizer token")
+        return int(token_ids[0])
+
+    def _spatial_merge_size(self):
+        config = getattr(self.attribution.model, "config", None)
+        vision_config = getattr(config, "vision_config", None)
+        return int(getattr(vision_config, "spatial_merge_size", 1))
 
     def aggregate_qwen_vision_by_image(
         self,
@@ -344,11 +349,8 @@ class QwenFeatureVisualization:
 
         grid = additional_forward_kwargs["image_grid_thw"]
 
-        token_counts = grid.prod(dim=1).long()
-
-        assert token_counts.sum().item() == x.shape[0], (
-            f"grid describes {token_counts.sum().item()} visual tokens, "
-            f"but tensor has {x.shape[0]}"
+        token_counts = qwen_visual_token_counts(
+            x.shape[0], additional_forward_kwargs
         )
 
         chunks = torch.split(
@@ -376,6 +378,17 @@ class QwenFeatureVisualization:
             )
 
         raise ValueError(f"Unknown aggregation mode: {mode}")
+
+    def _select_packed_images(self, x, additional_forward_kwargs, indices):
+        """Select complete images from a packed visual-token tensor."""
+        counts = qwen_visual_token_counts(x.shape[0], additional_forward_kwargs)
+        chunks = torch.split(x, counts.tolist(), dim=0)
+        selected = [chunks[int(index)] for index in indices]
+        kwargs = dict(additional_forward_kwargs)
+        grid = additional_forward_kwargs["image_grid_thw"]
+        index_tensor = torch.as_tensor(indices, device=grid.device, dtype=torch.long)
+        kwargs["image_grid_thw"] = grid.index_select(0, index_tensor)
+        return torch.cat(selected, dim=0), kwargs
     
     @torch.no_grad()
     def analyze_relevance(
@@ -389,20 +402,6 @@ class QwenFeatureVisualization:
     ):
         #print("raw relevance:", rel.shape)
 
-        if rel.shape[0] != len(data_indices):
-            rel = self.aggregate_qwen_vision_by_image(
-                rel,
-                additional_forward_kwargs,
-                mode="sum",
-            )
-
-        #print("image-level relevance:", rel.shape)
-
-        assert rel.shape[0] == len(data_indices), (
-            f"rel batch {rel.shape[0]} != "
-            f"number of samples {len(data_indices)}"
-        )
-
         d_c_sorted, rel_c_sorted, rf_c_sorted, t_c_sorted = (
             self.RelMax.analyze_layer(
                 torch.abs(rel),
@@ -412,6 +411,10 @@ class QwenFeatureVisualization:
                 targets,
                 additional_forward_kwargs,
             )
+        )
+
+        self.RelStats.analyze_layer(
+            d_c_sorted, rel_c_sorted, rf_c_sorted, t_c_sorted, layer_name
         )
 
         return d_c_sorted, rel_c_sorted, rf_c_sorted, t_c_sorted
@@ -428,26 +431,32 @@ class QwenFeatureVisualization:
     ):
         #print("raw activation:", act.shape)
 
-        # First convert packed Qwen visual tokens -> images
-        if act.shape[0] != len(data_indices):
-            act = self.aggregate_qwen_vision_by_image(
-                act,
-                additional_forward_kwargs,
-                mode="max",
-            )
-
-        #print("image-level activation:", act.shape)
-
-        # Now duplicate-target cleanup is valid,
-        # because dim 0 really is batch/images.
+        # Activations do not depend on the duplicated answer target. Keep one
+        # complete packed token span for each original image, while retaining
+        # the token axis needed to calculate receptive-field locations.
         unique_indices = np.unique(
             data_indices,
             return_index=True,
         )[1]
 
+        if act.shape[0] != len(data_indices):
+            act, additional_forward_kwargs = self._select_packed_images(
+                act, additional_forward_kwargs, unique_indices
+            )
+        else:
+            index_tensor = torch.as_tensor(
+                unique_indices, device=act.device, dtype=torch.long
+            )
+            act = act.index_select(0, index_tensor)
+            additional_forward_kwargs = dict(additional_forward_kwargs)
+            grid = additional_forward_kwargs["image_grid_thw"]
+            grid_indices = index_tensor.to(grid.device)
+            additional_forward_kwargs["image_grid_thw"] = grid.index_select(
+                0, grid_indices
+            )
+
         data_indices = data_indices[unique_indices]
         targets = targets[unique_indices]
-        act = act[unique_indices]
 
         #print("unique indices:", len(unique_indices))
         #print("analyze acts:", act.shape)
@@ -707,10 +716,11 @@ class QwenFeatureVisualization:
       layer_name: str,
       composite,
       rf=False,
-      neuron_ids=[],
+      neuron_ids=None,
       batch_size=32,
   ):
 
+      neuron_ids = [] if neuron_ids is None else neuron_ids
       print("new _attribution_on_reference")
       print("inputs.pixel_values:", inputs.pixel_values.shape)
 
@@ -834,6 +844,7 @@ class QwenFeatureVisualization:
                   "attention_mask": attention_mask,
                   "image_grid_thw": image_grid_thw,
                   "inputs_embeds": inputs_embeds,
+                  "spatial_merge_size": self._spatial_merge_size(),
               },
               rf=rf,
           )
