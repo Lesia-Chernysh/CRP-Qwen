@@ -111,7 +111,6 @@ def load_maximization(path_folder, layer_name):
 
     # If no checkpoint files exist, fall back to the old final-file format.
     if not checkpoint_files:
-        print("no checkpoint files")
         filename = f"{layer_name}_"
 
         d_c_sorted = np.load(
@@ -160,10 +159,6 @@ def load_maximization(path_folder, layer_name):
         data_parts.append(np.load(data_path))
         rel_parts.append(np.load(rel_path))
         rf_parts.append(np.load(rf_path))
-
-        print(f"data parts shape: {len(data_parts)}")
-        print(f"rel parts shape: {len(rel_parts)}")
-
 
     d_c_sorted = np.concatenate(data_parts, axis=0)
     rel_c_sorted = np.concatenate(rel_parts, axis=0)
