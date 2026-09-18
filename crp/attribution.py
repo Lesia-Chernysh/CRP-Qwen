@@ -85,8 +85,6 @@ class CondAttribution:
 
     def relevance_init(self, prediction, target_list, init_rel=None):
       # prediction: [B, S, V]
-      print("relevance_init")
-
       if init_rel is not None:
           return init_rel(prediction)
 
@@ -98,8 +96,6 @@ class CondAttribution:
           return prediction
 
       mask = torch.zeros_like(prediction)
-
-      print(f"mask: {mask.shape}")
 
       for i, targets in enumerate(target_list):
           # targets are vocab IDs
@@ -134,10 +130,6 @@ class CondAttribution:
 
         n_conditions = len(conditions)
 
-        print(
-            f"CRP batch={batch_size}, "
-            f"conditions={n_conditions}"
-        )
         # Same condition for every sample
         if n_conditions == 1 and batch_size > 1:
             conditions = conditions * batch_size
@@ -326,9 +318,6 @@ class CondAttribution:
         """
         record_layer = [] if record_layer is None else record_layer
         additional_forward_kwargs = {} if additional_forward_kwargs is None else additional_forward_kwargs
-        print("_attribute")
-        print(f"record layer: {record_layer}")
-
         #print(f"inputs type: {type(inputs)}")
 
         #print(f"inputs keys: {inputs.keys()}")
@@ -410,23 +399,8 @@ class CondAttribution:
             torch.manual_seed(self.seed)
             np.random.seed(self.seed)
 
-            print(f'layer input embeds: {additional_forward_kwargs["inputs_embeds"].shape}')
-
             if start_layer:
                 # TODO: different
-                print("=== get_max_reference attribution ===")
-                print("pixel values", inputs[0].shape)
-                print(
-                    "image_grid_thw:",
-                    additional_forward_kwargs.get("image_grid_thw")
-                )
-                print(
-                    "image_grid_thw shape:",
-                    additional_forward_kwargs.get(
-                        "image_grid_thw", torch.empty(0)
-                    ).shape
-                )
-
                 _ = modified(
                   inputs_embeds=additional_forward_kwargs["inputs_embeds"], # if inputs_embeds are not passed, they are computed later based on input_ids
                   pixel_values=inputs[0], # TODO: does it have to be a tuple at all?
@@ -440,26 +414,12 @@ class CondAttribution:
                 self.backward(pred, grad_mask, exclude_parallel, cond_l_names, layer_out)
 
             else:
-                print("=== get_max_reference attribution ===")
-                print("pixel values:", inputs[0].shape)
-                print(
-                    "image_grid_thw:",
-                    additional_forward_kwargs.get("image_grid_thw")
-                )
-                print(
-                    "image_grid_thw shape:",
-                    additional_forward_kwargs.get(
-                        "image_grid_thw", torch.empty(0)
-                    ).shape
-                )
                 pred = modified(
                   inputs_embeds=additional_forward_kwargs["inputs_embeds"],
                   pixel_values=inputs[0], # TODO: does it have to be a tuple at all?
                   image_grid_thw=additional_forward_kwargs["image_grid_thw"],
                   attention_mask=additional_forward_kwargs["attention_mask"],
                 ).logits
-
-                print(f"pred shape: {pred.shape}")
 
                 grad_mask = self.relevance_init(pred.detach().clone(), y_targets, init_rel)
                 self.backward(pred, grad_mask, exclude_parallel, cond_l_names, layer_out)
@@ -468,17 +428,9 @@ class CondAttribution:
             attribution = self.heatmap_modifier(inputs, on_device)
             activations, relevances = {}, {}
             
-            print("len out", len(layer_out))
             if len(layer_out) > 0:
                 activations, relevances = self._collect_hook_activation_relevance(layer_out, on_device)
             [h.remove() for h in handles]
-
-            for layer, acts in activations.items():
-                print(f"{layer}: {acts.shape}")
-                print(f"relevance: {relevances[layer].shape}")
-
-                print(f"acts none: {acts.any() is np.nan}")
-                print(f"rel none: {relevances[layer].any() is np.nan}")
 
         #print(f"act: {activations}\nrel: {relevances}\npred: {pred}\n")
         return attrResult(attribution, activations, relevances, pred)
