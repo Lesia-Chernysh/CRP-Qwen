@@ -90,9 +90,10 @@ class QwenFeatureVisualization:
             name_map.append(([l_name], hook))
         fv_composite = NameMapComposite(name_map)  #  maps module types to LRP rules, so that when this module is encountered, a corresponding hook is registered
 
-        # register 2 types of composites to propagate and collect relevance scores
-        if composite:
-            composite.register(self.attribution.model)  # replaces gradients with relevance scores
+        # Keep the feature-visualization hooks active for the scan.  The LRP
+        # composite is deliberately registered only for one attribution at a
+        # time below: Zennit hooks retain their latest forward tensors, so a
+        # scan-wide registration makes GPU memory grow after every sample.
         fv_composite.register(self.attribution.model)   # stores activation(relevance) scores
 
         pbar = tqdm(total=batches, dynamic_ncols=True)
@@ -208,10 +209,10 @@ class QwenFeatureVisualization:
             attr = self.attribution(
                 inputs,  # input is a tensor or a tuple of tensors.
                 conditions,
-                # The LRP composite is registered once above for the complete
-                # scan. Passing it here would register a second set of hooks on
-                # every iteration.
-                composite=None,
+                # Attribution registers the LRP composite in a context manager
+                # and removes it immediately afterwards.  This releases the
+                # tensors stored by Zennit's BasicHooks between samples.
+                composite=composite,
                 record_layer=list(self.layer_map.keys()),
                 additional_forward_kwargs=additional_forward_kwargs,
             )
@@ -235,8 +236,6 @@ class QwenFeatureVisualization:
         # TODO: what happens if result arrays are empty?
         self._save_results((last_checkpoint, b + 1))
 
-        if composite:
-            composite.remove()
         fv_composite.remove()
 
         pbar.close()
