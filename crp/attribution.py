@@ -433,7 +433,13 @@ class CondAttribution:
             [h.remove() for h in handles]
 
         #print(f"act: {activations}\nrel: {relevances}\npred: {pred}\n")
-        return attrResult(attribution, activations, relevances, pred)
+        # Never return a live prediction graph. Feature visualization keeps the
+        # result object until the next dataset iteration, which otherwise keeps
+        # the complete Qwen forward/backward graph resident on the GPU.
+        prediction = pred.detach()
+        if on_device is not None:
+            prediction = prediction.to(on_device)
+        return attrResult(attribution, activations, relevances, prediction)
 
     def generate(
             self, inputs: Union[torch.Tensor, Tuple[torch.Tensor]], conditions: List[Dict[str, List]],
