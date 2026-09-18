@@ -1,4 +1,5 @@
 from typing import List, Union, Dict, Tuple, Callable
+import gc
 import warnings
 import torch
 import numpy as np
@@ -207,10 +208,21 @@ class QwenFeatureVisualization:
             attr = self.attribution(
                 inputs,  # input is a tensor or a tuple of tensors.
                 conditions,
-                composite=composite,
+                # The LRP composite is registered once above for the complete
+                # scan. Passing it here would register a second set of hooks on
+                # every iteration.
+                composite=None,
                 record_layer=list(self.layer_map.keys()),
                 additional_forward_kwargs=additional_forward_kwargs,
             )
+
+            # Hook callbacks have already consumed the activations and
+            # relevances. Do not retain the attribution result or input graph.
+            del attr, inputs, conditions, additional_forward_kwargs
+
+            if torch.cuda.is_available() and (b + 1) % 25 == 0:
+                gc.collect()
+                torch.cuda.empty_cache()
 
 
             # self.attribution((inputs.pixel_values, inputs.input_embeds), conditions, None, exclude_parallel=False,
