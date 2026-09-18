@@ -51,10 +51,8 @@ class QwenFeatureVisualization:
         :param on_device:
         :return:
         """
-        print("Running Analysis...")
         saved_checkpoints = self.run_distributed(data_start, data_end, composite, batch_size, checkpoint, on_device)
 
-        print("Collecting results...")
         saved_files = self.collect_results(saved_checkpoints)
 
         return saved_files
@@ -83,8 +81,6 @@ class QwenFeatureVisualization:
             batches = 1
             batch_size = n_samples
 
-        print(f"batch size: {batch_size}")
-
         # feature visualization is performed inside forward and backward hook of layers
         name_map, dict_inputs = [], {}
 
@@ -101,8 +97,6 @@ class QwenFeatureVisualization:
         pbar = tqdm(total=batches, dynamic_ncols=True)
 
         for b in range(batches):
-            print(f"batch {b}/{batches}")
-
             pbar.update(1)
 
             sample_indices = samples[b * batch_size: (b + 1) * batch_size]
@@ -126,13 +120,10 @@ class QwenFeatureVisualization:
                 clean_up_tokenization_spaces=False,
             )
 
-            for idx, answer in zip(sample_indices, answers):
-                print(f"{idx}: {answer}")'''
+            answers are available here if generated-output inspection is needed.'''
 
             # handle multiple targets (vqa has multiple answers per question)
             target_counts = list(map(len, multi_targets))
-            print(f"target_counts: {target_counts}")
-
             targets = np.array(list(itertools.chain(*multi_targets)))  # flatten 2d list Ex.: chain('ABC', 'DEF') → A B C D E F
             # copy data for every target in target list
 
@@ -155,8 +146,6 @@ class QwenFeatureVisualization:
             and the input will have shape (2560, n_neurons)
             '''
             patch_counts = original_grid.prod(dim=1).tolist()  # --> [h_patch*w_patch for image in batch]
-            print(f"patch_counts: {patch_counts}")
-
             pixel_chunks = torch.split(
                 original_pixels,
                 patch_counts,
@@ -214,14 +203,6 @@ class QwenFeatureVisualization:
             dict_inputs["additional_forward_kwargs"] = additional_forward_kwargs
 
 
-            for _, hook in name_map:
-              print(
-                  "same dict:",
-                  hook.dict_inputs is dict_inputs,
-                  "keys:",
-                  hook.dict_inputs.keys()
-              )
-
             # composites are already registered before
             attr = self.attribution(
                 inputs,  # input is a tensor or a tuple of tensors.
@@ -256,9 +237,6 @@ class QwenFeatureVisualization:
         :param indices: indices of the dataset images that will be input to the model
         :return: inputs, targets
         """
-        print(f"get data concurrently")
-        print(f"indices {indices}")
-
         images, questions, answers = zip(*[self.dataset[int(i)] for i in indices])
 
         # process images in batches
@@ -299,8 +277,6 @@ class QwenFeatureVisualization:
 
         # 'transformers.feature_extraction_utils.BatchFeature' is a dict-like object with such keys:
         # 'input_ids', 'attention_mask', 'pixel_values', 'image_grid_thw'
-        print(f"inputs.pixel_values: {inputs.pixel_values.shape}")
-
         # CRP initializes relevance in the model's vocabulary dimension.  A
         # dataset class index is therefore invalid here.  Attribute the first
         # token Qwen is expected to generate for each answer.  Explaining later
@@ -616,9 +592,6 @@ class QwenFeatureVisualization:
             d_indices = d_c_sorted[r_range[0]:r_range[1], c_id]
             n_indices = rf_c_sorted[r_range[0]:r_range[1], c_id]
 
-            print(type(d_indices))
-            print(d_indices)
-            print(type(n_indices))
             ref_c[c_id] = self._load_ref_and_attribution(d_indices, c_id, n_indices, layer_name, attribute, rf, plot_fn,
                                                          batch_size)
 
@@ -694,13 +667,8 @@ class QwenFeatureVisualization:
     def _load_ref_and_attribution(self, d_indices, c_id, n_indices, layer_name, attribute, rf, plot_fn, batch_size):
 
         inputs, _ = self.get_data_concurrently(d_indices)
-        print("_load_ref_and_attribution")
-        print(f"inputs: {type(inputs)}")
-
         if attribute:
             heatmaps = self._attribution_on_reference(inputs, c_id, layer_name, None, rf, n_indices, batch_size)
-
-            print(f"heatmaps shape: {heatmaps[0]}")
             if callable(plot_fn):
                 return plot_fn(inputs.pixel_values, heatmaps[0], rf)
             else:
@@ -721,9 +689,6 @@ class QwenFeatureVisualization:
   ):
 
       neuron_ids = [] if neuron_ids is None else neuron_ids
-      print("new _attribution_on_reference")
-      print("inputs.pixel_values:", inputs.pixel_values.shape)
-
       n_samples = len(inputs.input_ids)
 
       if n_samples > batch_size:
@@ -794,16 +759,6 @@ class QwenFeatureVisualization:
               patch_start:patch_end
           ]
 
-          print(
-              "pixel_values before attrib:",
-              pixel_values.shape,
-          )
-
-          print(
-              "grid:",
-              image_grid_thw,
-          )
-
           # Very useful sanity check
           expected_patches = (
               image_grid_thw
@@ -850,12 +805,6 @@ class QwenFeatureVisualization:
           )
 
           img_heatmap = attr.heatmap[0]
-
-          print("raw image heatmap:", img_heatmap.shape)
-          print(
-              "raw image heatmap |max|:",
-              float(img_heatmap.detach().abs().max().cpu()),
-          )
 
           # Collapse flattened patch features and split the packed tensor back
           # into the images in this batch. This must stay inside the batch
