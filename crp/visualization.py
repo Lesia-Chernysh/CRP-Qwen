@@ -849,41 +849,29 @@ class QwenFeatureVisualization:
               rf=rf,
           )
 
-      
-      img_heatmap = attr.heatmap[0]
+          img_heatmap = attr.heatmap[0]
 
-      print("raw image heatmap:", img_heatmap.shape)
-      # [512, 1176]
+          print("raw image heatmap:", img_heatmap.shape)
 
-      # Collapse flattened patch features
-      patch_relevance = img_heatmap.sum(dim=1)
-      # [512]
+          # Collapse flattened patch features and split the packed tensor back
+          # into the images in this batch. This must stay inside the batch
+          # loop; otherwise only the final batch contributes heatmaps.
+          patch_relevance = img_heatmap.sum(dim=1)
+          batch_patch_counts = image_grid_thw.prod(dim=1).tolist()
+          per_image = torch.split(patch_relevance, batch_patch_counts)
 
-      patch_counts = image_grid_thw.prod(dim=1).tolist()
-      # [256, 256]
+          for hm, grid in zip(per_image, image_grid_thw):
+              t, h, w = map(int, grid.tolist())
+              hm = hm.reshape(t, h, w).sum(dim=0)
+              img_heatmaps.append(hm.detach().cpu())
 
-      per_image = torch.split(
-          patch_relevance,
-          patch_counts,
-      )
+          if len(attr.heatmap) > 1:
+              txt_heatmaps.extend(attr.heatmap[1].sum(-1).detach().cpu())
 
-      for hm, grid in zip(per_image, image_grid_thw):
-
-          t, h, w = map(int, grid.tolist())
-
-          hm = hm.reshape(t, h, w)
-
-          # For images t should normally be 1
-          hm = hm.sum(dim=0)
-
-          img_heatmaps.append(hm.detach().cpu())
-
-      print(f"attr.heatmap len: {len(attr.heatmap)}")
-      try:
-        print(f"attr.heatmap[1]: {attr.heatmap[1].shape}")
-        txt_heatmaps.extend(attr.heatmap[1].sum(-1))
-      except IndexError:
-        pass
+      if len(img_heatmaps) != n_samples:
+          raise RuntimeError(
+              f"Expected {n_samples} image heatmaps, got {len(img_heatmaps)}"
+          )
       
       return (img_heatmaps, txt_heatmaps)
 
