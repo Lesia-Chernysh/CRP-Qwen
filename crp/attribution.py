@@ -406,6 +406,8 @@ class CondAttribution:
                   pixel_values=inputs[0], # TODO: does it have to be a tuple at all?
                   image_grid_thw=additional_forward_kwargs["image_grid_thw"], # is needed to reconstruct patches per image
                   attention_mask=additional_forward_kwargs["attention_mask"],
+                  use_cache=False,
+                  logits_to_keep=1,
                 ).logits
                 pred = layer_out[start_layer]
                 grad_mask = self.relevance_init(pred.detach().clone(), y_targets, init_rel)
@@ -419,6 +421,8 @@ class CondAttribution:
                   pixel_values=inputs[0], # TODO: does it have to be a tuple at all?
                   image_grid_thw=additional_forward_kwargs["image_grid_thw"],
                   attention_mask=additional_forward_kwargs["attention_mask"],
+                  use_cache=False,
+                  logits_to_keep=1,
                 ).logits
 
                 grad_mask = self.relevance_init(pred.detach().clone(), y_targets, init_rel)
