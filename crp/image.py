@@ -10,8 +10,6 @@ import zennit.image as zimage
 from zennit.image import interval_norm_bounds
 from crp.helper import max_norm
 
-print("NEEW")
-
 def get_crop_range(heatmap, crop_th):
     """
     Returns indices in order to crop the supplied heatmap where relevance is greater than heatmap > crop_th.
