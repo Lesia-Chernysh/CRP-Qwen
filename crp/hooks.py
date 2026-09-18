@@ -75,10 +75,10 @@ class FeatVisHook:
         print(f"hooks/forward_hook. dict_inputs: {self.dict_inputs}")
         s_indices, targets, additional_forward_kwargs = self.dict_inputs["sample_indices"], self.dict_inputs["targets"], self.dict_inputs["additional_forward_kwargs"]
         
-        if isinstance(output, tuple):
-          output = output[0]
+        original_output = output
+        tensor_output = output[0] if isinstance(output, tuple) else output
 
-        activation = output.detach().to(self.on_device) if self.on_device else output.detach()
+        activation = tensor_output.detach().to(self.on_device) if self.on_device else tensor_output.detach()
         #print(f"post forward, activations: {activation.shape}")
         self.FV.analyze_activation(activation, self.layer_name, self.concept, s_indices, targets, additional_forward_kwargs)
 
@@ -92,13 +92,13 @@ class FeatVisHook:
         def wrapper(grad):
             return hook_ref().backward(module, grad)
 
-        if not isinstance(output, tuple):
-            output = (output,)
-
-        if output[0].grad_fn is not None:
+        if tensor_output.grad_fn is not None:
             # only if gradient required
-            output[0].register_hook(wrapper)
-        return output[0] if len(output) == 1 else output
+            tensor_output.register_hook(wrapper)
+
+        # Forward hooks must not change a module's public output contract.  In
+        # particular, Qwen decoder/vision blocks frequently return tuples.
+        return original_output
 
     def backward(self, module, grad):
         '''Hook applied during backward-pass'''
