@@ -195,9 +195,9 @@ class CondAttribution:
 
     def __call__(
             self, inputs: Union[torch.Tensor, Tuple[torch.Tensor]], conditions: List[Dict[str, List]],
-            composite: Composite = None, record_layer: List[str] = [],
+            composite: Composite = None, record_layer: List[str] = None,
             mask_map: Union[Callable, Dict[str, Callable]] = TransformerChannelConcept.mask, start_layer: str = None, init_rel=None,
-            on_device: str = None, exclude_parallel=True, additional_forward_kwargs: Dict[str, torch.Tensor] = {}, rf=False) -> attrResult:
+            on_device: str = None, exclude_parallel=True, additional_forward_kwargs: Dict[str, torch.Tensor] = None, rf=False) -> attrResult:
 
         """
         Computes conditional attributions by masking the gradient flow of PyTorch (that is replaced by zennit with relevance values).
@@ -309,14 +309,16 @@ class CondAttribution:
 
     def _attribute(
             self, inputs: Union[torch.Tensor, Tuple[torch.Tensor]], conditions: List[Dict[str, List]],
-            composite: Composite = None, record_layer: List[str] = [],
+            composite: Composite = None, record_layer: List[str] = None,
             mask_map: Union[Callable, Dict[str, Callable]] = TransformerChannelConcept.mask, start_layer: str = None, init_rel=None,
-            on_device: str = None, exclude_parallel=True, additional_forward_kwargs: Dict[str, torch.Tensor] = {}, rf=False) -> attrResult:
+            on_device: str = None, exclude_parallel=True, additional_forward_kwargs: Dict[str, torch.Tensor] = None, rf=False) -> attrResult:
         """
         Computes the actual attributions as described in __call__ method docstring.
         exclude_parallel: boolean
             If set, all layer names in 'conditions' must be identical. This limitation does not apply to the __call__ method.
         """
+        record_layer = [] if record_layer is None else record_layer
+        additional_forward_kwargs = {} if additional_forward_kwargs is None else additional_forward_kwargs
         print("_attribute")
         print(f"record layer: {record_layer}")
 
@@ -476,9 +478,9 @@ class CondAttribution:
 
     def generate(
             self, inputs: Union[torch.Tensor, Tuple[torch.Tensor]], conditions: List[Dict[str, List]],
-            composite: Composite = None, record_layer: List[str] = [],
+            composite: Composite = None, record_layer: List[str] = None,
             mask_map: Union[Callable, Dict[str, Callable]] = TransformerChannelConcept.mask, start_layer: str = None, init_rel=None,
-            batch_size=10, on_device=None, exclude_parallel=True, verbose=True, additional_forward_kwargs: Dict[str, torch.Tensor] = {}, rf=False) -> attrResult:
+            batch_size=10, on_device=None, exclude_parallel=True, verbose=True, additional_forward_kwargs: Dict[str, torch.Tensor] = None, rf=False) -> attrResult:
         """
         Computes several conditional attributions for single data point by broadcasting 'inputs' to length 'batch_size' and
         iterating through the 'conditions' list with stepsize 'batch_size'. The model forward pass is performed only once and 
@@ -493,6 +495,8 @@ class CondAttribution:
             If set, a progressbar is displayed.
         """
         
+        record_layer = [] if record_layer is None else record_layer
+        additional_forward_kwargs = {} if additional_forward_kwargs is None else additional_forward_kwargs
         if not isinstance(inputs, tuple):
             inputs = (inputs,)
         self._check_arguments(inputs, conditions, start_layer, exclude_parallel, init_rel)
@@ -521,8 +525,22 @@ class CondAttribution:
             batches = 1
             batch_size = cond_length
 
-        inputs_batched = tuple(torch.repeat_interleave(i, batch_size, dim=0) for i in inputs)
-        additional_forward_kwargs = {key:torch.repeat_interleave(val, len_cond, dim=0) for key, val in additional_forward_kwargs}
+        grid = additional_forward_kwargs.get("image_grid_thw")
+        packed_rows = int(grid.prod(dim=1).sum().item()) if torch.is_tensor(grid) else None
+        inputs_batched = tuple(
+            torch.cat([value] * batch_size, dim=0)
+            if packed_rows is not None and value.shape[0] == packed_rows
+            else torch.repeat_interleave(value, batch_size, dim=0)
+            for value in inputs
+        )
+        additional_forward_kwargs = {
+            key: (
+                torch.repeat_interleave(value, batch_size, dim=0)
+                if torch.is_tensor(value) and value.ndim > 0
+                else value
+            )
+            for key, value in additional_forward_kwargs.items()
+        }
         for b in inputs_batched:
             b.grad = None
             b.retain_grad()
@@ -591,8 +609,9 @@ class CondAttribution:
     @staticmethod
     def _generate_hook(layer_name, layer_out):
         def get_tensor_hook(module, input, output):
-            layer_out[layer_name] = output
-            output.retain_grad()
+            tensor_output = output[0] if isinstance(output, tuple) else output
+            layer_out[layer_name] = tensor_output
+            tensor_output.retain_grad()
 
         return get_tensor_hook
 
