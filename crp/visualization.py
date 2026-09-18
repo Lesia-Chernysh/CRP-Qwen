@@ -852,6 +852,10 @@ class QwenFeatureVisualization:
           img_heatmap = attr.heatmap[0]
 
           print("raw image heatmap:", img_heatmap.shape)
+          print(
+              "raw image heatmap |max|:",
+              float(img_heatmap.detach().abs().max().cpu()),
+          )
 
           # Collapse flattened patch features and split the packed tensor back
           # into the images in this batch. This must stay inside the batch
