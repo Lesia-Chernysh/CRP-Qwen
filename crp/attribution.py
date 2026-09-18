@@ -90,6 +90,13 @@ class CondAttribution:
       if init_rel is not None:
           return init_rel(prediction)
 
+      # When attribution starts at an internal layer there is no vocabulary
+      # target in the condition.  Seed relevance with that layer's activation;
+      # the registered concept hook then keeps only the requested channel.
+      # Returning an all-zero mask here would make every reference heatmap zero.
+      if not target_list:
+          return prediction
+
       mask = torch.zeros_like(prediction)
 
       print(f"mask: {mask.shape}")
