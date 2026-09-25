@@ -320,6 +320,80 @@ class QwenFeatureVisualization:
         vision_config = getattr(config, "vision_config", None)
         return int(getattr(vision_config, "spatial_merge_size", 1))
 
+    def _qwen_pixel_relevance_map(self, pixel_values, relevance, grid):
+        """Convert flattened Qwen patch relevance to a dense pixel heatmap.
+
+        Qwen stores an image as rows of flattened
+        ``[channels, temporal_patch, patch_h, patch_w]`` patches.  Patch rows
+        are ordered in spatial-merge groups rather than simple raster order.
+        This method first applies the original CRP input-times-relevance rule,
+        then reverses both flattening and merge-group ordering.
+        """
+        config = getattr(self.attribution.model, "config", None)
+        vision_config = getattr(config, "vision_config", None)
+        patch_size = int(getattr(vision_config, "patch_size", 14))
+        temporal_patch_size = int(
+            getattr(vision_config, "temporal_patch_size", 2)
+        )
+        merge_size = self._spatial_merge_size()
+        t, h, w = map(int, grid.tolist())
+
+        features_per_channel = temporal_patch_size * patch_size * patch_size
+        if pixel_values.shape[1] % features_per_channel:
+            raise ValueError(
+                f"Qwen pixel feature width {pixel_values.shape[1]} is not "
+                f"divisible by temporal_patch_size*patch_size^2 "
+                f"({features_per_channel})"
+            )
+        channels = pixel_values.shape[1] // features_per_channel
+        expected_patches = t * h * w
+        if pixel_values.shape != relevance.shape:
+            raise ValueError(
+                f"Input and relevance shapes differ: {pixel_values.shape} vs "
+                f"{relevance.shape}"
+            )
+        if pixel_values.shape[0] != expected_patches:
+            raise ValueError(
+                f"Grid describes {expected_patches} patches, received "
+                f"{pixel_values.shape[0]}"
+            )
+        if h % merge_size or w % merge_size:
+            raise ValueError(
+                f"Patch grid {(h, w)} is not divisible by spatial merge "
+                f"size {merge_size}"
+            )
+
+        # The attribution object exposes the input relevance in .grad. Match
+        # the original CRP input heatmap definition before aggregating RGB and
+        # the duplicated temporal frames used for still images.
+        pixel_relevance = (pixel_values * relevance).reshape(
+            expected_patches,
+            channels,
+            temporal_patch_size,
+            patch_size,
+            patch_size,
+        ).sum(dim=(1, 2))
+
+        # Reverse Qwen2.5-VLImageProcessor's patch order:
+        # [t, h//m, w//m, m_h, m_w, patch_h, patch_w]
+        dense = pixel_relevance.reshape(
+            t,
+            h // merge_size,
+            w // merge_size,
+            merge_size,
+            merge_size,
+            patch_size,
+            patch_size,
+        ).permute(0, 1, 3, 5, 2, 4, 6).contiguous().reshape(
+            t,
+            h * patch_size,
+            w * patch_size,
+        )
+
+        # Still images normally have t=1. Summing also gives a meaningful map
+        # for multi-frame inputs while conserving total signed relevance.
+        return dense.sum(dim=0)
+
     def aggregate_qwen_vision_by_image(
         self,
         x,
@@ -794,15 +868,26 @@ class QwenFeatureVisualization:
               .requires_grad_(True)
           )
 
-          conditions = [
-              {layer_name: [concept_id]}
-          ]
+          if rf:
+              batch_neuron_ids = neuron_ids[sample_start:sample_end]
+              conditions = [
+                  {
+                      layer_name: {
+                          int(concept_id): [int(neuron_index)]
+                      }
+                  }
+                  for neuron_index in batch_neuron_ids
+              ]
+              mask_map = self.layer_map[layer_name].mask_rf
+          else:
+              conditions = [{layer_name: [concept_id]}]
+              mask_map = self.layer_map[layer_name].mask
 
           attr = self.attribution(
               (pixel_values,),
               conditions,
               composite,
-              mask_map=self.layer_map[layer_name].mask,
+              mask_map=mask_map,
               start_layer=layer_name,
               on_device=self.device,
               exclude_parallel=False,
@@ -815,18 +900,20 @@ class QwenFeatureVisualization:
               rf=rf,
           )
 
-          img_heatmap = attr.heatmap[0]
+          input_relevance = attr.heatmap[0]
 
-          # Collapse flattened patch features and split the packed tensor back
-          # into the images in this batch. This must stay inside the batch
-          # loop; otherwise only the final batch contributes heatmaps.
-          patch_relevance = img_heatmap.sum(dim=1)
+          # Split packed patches by image and reconstruct dense pixel-level
+          # input-times-relevance heatmaps rather than one scalar per patch.
           batch_patch_counts = image_grid_thw.prod(dim=1).tolist()
-          per_image = torch.split(patch_relevance, batch_patch_counts)
+          per_image_inputs = torch.split(pixel_values, batch_patch_counts)
+          per_image_relevance = torch.split(input_relevance, batch_patch_counts)
 
-          for hm, grid in zip(per_image, image_grid_thw):
-              t, h, w = map(int, grid.tolist())
-              hm = hm.reshape(t, h, w).sum(dim=0)
+          for image_input, image_relevance, grid in zip(
+              per_image_inputs, per_image_relevance, image_grid_thw
+          ):
+              hm = self._qwen_pixel_relevance_map(
+                  image_input, image_relevance, grid
+              )
               img_heatmaps.append(hm.detach().cpu())
 
           if len(attr.heatmap) > 1:
