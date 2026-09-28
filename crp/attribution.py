@@ -321,7 +321,13 @@ class CondAttribution:
             If set, all layer names in 'conditions' must be identical. This limitation does not apply to the __call__ method.
         """
         record_layer = [] if record_layer is None else record_layer
-        additional_forward_kwargs = {} if additional_forward_kwargs is None else additional_forward_kwargs
+        # Keep caller-supplied options such as ``logits_to_keep``.  Qwen inputs
+        # are commonly passed as a BatchFeature below; its fields must be merged
+        # with these options, not replace them.
+        additional_forward_kwargs = (
+            {} if additional_forward_kwargs is None
+            else dict(additional_forward_kwargs)
+        )
         #print(f"inputs type: {type(inputs)}")
 
         #print(f"inputs keys: {inputs.keys()}")
@@ -351,11 +357,16 @@ class CondAttribution:
             # We attribute with respect to the image
             pixel_values.requires_grad_(True)
 
-            additional_forward_kwargs = {
+            batch_forward_kwargs = {
                 key: value
                 for key, value in batch.items()
                 if key != "pixel_values"
             }
+            # Explicit caller options win over identically named BatchFeature
+            # entries.  In particular, generated-answer attribution requires
+            # logits_to_keep > 1.
+            batch_forward_kwargs.update(additional_forward_kwargs)
+            additional_forward_kwargs = batch_forward_kwargs
 
             # IMPORTANT: tuple of Tensor, not tuple of BatchFeature
             inputs = (pixel_values,)
