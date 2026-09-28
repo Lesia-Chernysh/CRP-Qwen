@@ -98,9 +98,13 @@ class CondAttribution:
       mask = torch.zeros_like(prediction)
 
       for i, targets in enumerate(target_list):
-          # targets are vocab IDs
-          # TODO: check if correct for Qwen
-          mask[i, -1, targets] = prediction[i, -1, targets]
+          for target in targets:
+              # A plain vocabulary ID retains the original next-token API.
+              if isinstance(target, (tuple, list)) and len(target) == 2:
+                  position, token_id = map(int, target)
+              else:
+                  position, token_id = -1, int(target)
+              mask[i, position, token_id] = prediction[i, position, token_id]
 
       return mask
 
@@ -407,7 +411,9 @@ class CondAttribution:
                   image_grid_thw=additional_forward_kwargs["image_grid_thw"], # is needed to reconstruct patches per image
                   attention_mask=additional_forward_kwargs["attention_mask"],
                   use_cache=False,
-                  logits_to_keep=1,
+                  logits_to_keep=additional_forward_kwargs.get(
+                      "logits_to_keep", 1
+                  ),
                 ).logits
                 pred = layer_out[start_layer]
                 grad_mask = self.relevance_init(pred.detach().clone(), y_targets, init_rel)
@@ -422,7 +428,9 @@ class CondAttribution:
                   image_grid_thw=additional_forward_kwargs["image_grid_thw"],
                   attention_mask=additional_forward_kwargs["attention_mask"],
                   use_cache=False,
-                  logits_to_keep=1,
+                  logits_to_keep=additional_forward_kwargs.get(
+                      "logits_to_keep", 1
+                  ),
                 ).logits
 
                 grad_mask = self.relevance_init(pred.detach().clone(), y_targets, init_rel)
