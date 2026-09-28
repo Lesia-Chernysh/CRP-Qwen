@@ -1,5 +1,7 @@
 from typing import List, Union, Dict, Tuple, Callable
 import gc
+import json
+import re
 import warnings
 import torch
 import numpy as np
@@ -23,11 +25,15 @@ from crp.cache import Cache
 class QwenFeatureVisualization:
     def __init__(
             self, attribution: CondAttribution, dataset, layer_map: Dict[str, Concept], processor=None,
-            max_target="sum", abs_norm=True, path="FeatureVisualization", device=None, cache: Cache = None):
+            max_target="sum", abs_norm=True, path="FeatureVisualization", device=None, cache: Cache = None,
+            max_new_tokens=20, include_eos=False):
 
         self.dataset = dataset
         self.layer_map = layer_map
         self.processor = processor
+        self.max_new_tokens = int(max_new_tokens)
+        self.include_eos = bool(include_eos)
+        self.prediction_records = []
 
         self.attribution = attribution
 
@@ -102,97 +108,84 @@ class QwenFeatureVisualization:
             pbar.update(1)
 
             sample_indices = samples[b * batch_size: (b + 1) * batch_size]
-            inputs, multi_targets = self.get_data_concurrently(sample_indices)
+            inputs, true_answers = self.get_data_concurrently(sample_indices)
 
-            # output predictions
-            '''output_ids = self.attribution.model.generate(
-                    **inputs,
-                    max_new_tokens=20,
-                )
+            # Generate the model's actual answer. A second forward pass below
+            # reconstructs logits for the union of all generated answer tokens.
+            prompt_width = inputs.input_ids.shape[1]
+            # Feature-visualization hooks must observe only the attributed
+            # recomputation, not each autoregressive generation step.
+            fv_composite.remove()
+            try:
+                with torch.no_grad():
+                    output_ids = self.attribution.model.generate(
+                        input_ids=inputs.input_ids,
+                        attention_mask=inputs.attention_mask,
+                        pixel_values=inputs.pixel_values,
+                        image_grid_thw=inputs.image_grid_thw,
+                        max_new_tokens=self.max_new_tokens,
+                        do_sample=False,
+                        use_cache=True,
+                    )
+            finally:
+                fv_composite.register(self.attribution.model)
 
-            generated_ids_trimmed = [
-                output_ids_i[len(input_ids_i):]
-                for input_ids_i, output_ids_i
-                in zip(inputs["input_ids"], output_ids)
-            ]
+            generated_width = output_ids.shape[1] - prompt_width
+            if generated_width <= 0:
+                raise RuntimeError("Qwen generated no answer tokens")
+            generated_ids = output_ids[:, prompt_width:]
+            recompute_ids = output_ids[:, :-1]
+            inputs["input_ids"] = recompute_ids
+            inputs["attention_mask"] = torch.ones_like(recompute_ids)
+            inputs["inputs_embeds"] = (
+                self.attribution.model.get_input_embeddings()(recompute_ids)
+                .detach()
+                .requires_grad_(True)
+            )
 
-            answers = self.processor.batch_decode(
-                generated_ids_trimmed,
+            tokenizer = getattr(self.processor, "tokenizer", self.processor)
+            pad_id = getattr(tokenizer, "pad_token_id", None)
+            eos_id = getattr(tokenizer, "eos_token_id", None)
+            conditions, statistic_targets, decoded_token_lists = [], [], []
+            for row in range(generated_ids.shape[0]):
+                token_ids, token_conditions = [], []
+                for position, token in enumerate(generated_ids[row].tolist()):
+                    token = int(token)
+                    if pad_id is not None and token == pad_id:
+                        continue
+                    if eos_id is not None and token == eos_id and not self.include_eos:
+                        continue
+                    token_ids.append(token)
+                    token_conditions.append((position, token))
+                if not token_conditions:
+                    token = int(generated_ids[row, 0])
+                    token_ids, token_conditions = [token], [(0, token)]
+                conditions.append({
+                    self.attribution.MODEL_OUTPUT_NAME: token_conditions
+                })
+                statistic_targets.append(token_ids[0])
+                decoded_token_lists.append(token_ids)
+
+            predictions = self.processor.batch_decode(
+                decoded_token_lists,
                 skip_special_tokens=True,
                 clean_up_tokenization_spaces=False,
             )
+            for dataset_index, truth, prediction in zip(
+                sample_indices, true_answers, predictions
+            ):
+                def normalize(value):
+                    value = re.sub(r"[^\w\s-]", "", str(value).casefold())
+                    return re.sub(r"\s+", " ", value).strip()
+                self.prediction_records.append({
+                    "dataset_index": int(dataset_index),
+                    "true_answer": str(truth),
+                    "prediction": str(prediction).strip(),
+                    "exact_match": normalize(truth) == normalize(prediction),
+                })
 
-            answers are available here if generated-output inspection is needed.'''
-
-            # handle multiple targets (vqa has multiple answers per question)
-            target_counts = list(map(len, multi_targets))
-            targets = np.array(list(itertools.chain(*multi_targets)))  # flatten 2d list Ex.: chain('ABC', 'DEF') → A B C D E F
-            # copy data for every target in target list
-
-            target_counts_t = torch.as_tensor(
-                target_counts,
-                device=inputs["input_ids"].device,
-                dtype=torch.long,
-            )
-
-            original_grid = inputs["image_grid_thw"]  # 224 / patch_kernel = 224/14 = 16
-            original_pixels = inputs["pixel_values"]  # shape: (2560, 1176); 1176 = 14*14*2(temporal)*3(channels)
-
-            #print("original pixels", original_pixels.shape)
-            # Number of packed visual rows belonging to each image
-            '''
-            Instead of shape (batch, hidden, n_neurons), Qwen packs inputs into
-            shape (batch*h_patch*w_patch, n_neurons). 
-            h_patch, w_patch = h_image / kernel_patch_h, w_patch / kernel_patch_w
-            E.g. batch with 10 images of size 224x224 will form (224/14)^2 = 16*16 = 256 patches,
-            and the input will have shape (2560, n_neurons)
-            '''
-            patch_counts = original_grid.prod(dim=1).tolist()  # --> [h_patch*w_patch for image in batch]
-            pixel_chunks = torch.split(
-                original_pixels,
-                patch_counts,
-                dim=0,
-            )  # --> tuple(
-               #      tensor (shape=256, n_neurons),
-               #      tensor (shape=256, n_neurons),
-               #      ...
-               #   ), len(tuple)=2560/256=10
-
-            #print(f"patch_counts: {patch_counts}")
-
-            # Duplicate each complete image's patches according to CRP target count
-            new_pixel_chunks = []
-
-            for chunk, repeats in zip(pixel_chunks, target_counts):
-                for _ in range(int(repeats)):
-                    new_pixel_chunks.append(chunk)
-
-            inputs["pixel_values"] = torch.cat(new_pixel_chunks, dim=0)
-
-            # image_grid_thw IS image-based, so normal repeat_interleave works
-            inputs["image_grid_thw"] = original_grid.repeat_interleave(
-                target_counts_t,
-                dim=0,
-            )
-
-            # Text tensors are batch-based
-            for key in [
-                "input_ids",
-                "attention_mask"
-            ]:
-                if key in inputs:
-                    inputs[key] = inputs[key].repeat_interleave(
-                        target_counts_t,
-                        dim=0,
-                    )  # --> (batch, text/multimodal sequence length)
-
-                    #print(f"repeat {key}. {inputs[key].shape}")
-
-            
-            #    inputs[key] = input_batch.repeat_interleave(torch.tensor(target_counts).cuda(), dim=0)
-            sample_indices = np.array(sample_indices).repeat(target_counts, axis=0)
-
-            conditions = [{self.attribution.MODEL_OUTPUT_NAME: [t]} for t in targets]
+            targets = np.asarray(statistic_targets, dtype=np.int64)
+            sample_indices = np.asarray(sample_indices)
             # dict_inputs is linked to FeatHooks
             dict_inputs["input_ids"] = inputs.input_ids
             dict_inputs["sample_indices"] = sample_indices
@@ -201,6 +194,7 @@ class QwenFeatureVisualization:
               "attention_mask": inputs.attention_mask,
               "image_grid_thw": inputs.image_grid_thw,
               "spatial_merge_size": self._spatial_merge_size(),
+              "logits_to_keep": generated_width,
               }
             dict_inputs["additional_forward_kwargs"] = additional_forward_kwargs
 
@@ -239,6 +233,18 @@ class QwenFeatureVisualization:
         fv_composite.remove()
 
         pbar.close()
+
+        prediction_path = self.RelMax.PATH.parent / "generated_predictions.jsonl"
+        with prediction_path.open("w", encoding="utf-8") as stream:
+            for record in self.prediction_records:
+                stream.write(json.dumps(record, ensure_ascii=False) + "\n")
+        correct = sum(record["exact_match"] for record in self.prediction_records)
+        total = len(self.prediction_records)
+        accuracy = correct / total if total else 0.0
+        print(
+            f"Generated-answer exact-match accuracy: {correct}/{total} "
+            f"({accuracy:.2%}). Saved to {prediction_path}"
+        )
 
         return self.saved_checkpoints
 
@@ -286,22 +292,13 @@ class QwenFeatureVisualization:
             return_tensors="pt",
         ).to(self.device)  # --> class 'transformers.feature_extraction_utils.BatchFeature'
 
-        # 'transformers.feature_extraction_utils.BatchFeature' is a dict-like object with such keys:
-        # 'input_ids', 'attention_mask', 'pixel_values', 'image_grid_thw'
-        # CRP initializes relevance in the model's vocabulary dimension.  A
-        # dataset class index is therefore invalid here.  Attribute the first
-        # token Qwen is expected to generate for each answer.  Explaining later
-        # answer tokens requires separate autoregressive forwards with their
-        # preceding answer tokens in the prompt.
-        targets = [[self._first_answer_token_id(answer)] for answer in answers]
-
+        # The ground-truth answers are retained only for later correctness
+        # evaluation. CRP relevance is initialized from Qwen's generated
+        # multi-token answer inside run_distributed.
         inputs.to(self.attribution.model.device)
-        inputs["inputs_embeds"] = self.attribution.model.get_input_embeddings()(
-            inputs.input_ids).detach().requires_grad_(True)
-        inputs["spatial_merge_size"] = self._spatial_merge_size()
         inputs.pixel_values.requires_grad_(True)
 
-        return inputs, targets
+        return inputs, list(answers)
 
     def _first_answer_token_id(self, answer):
         tokenizer = getattr(self.processor, "tokenizer", self.processor)
